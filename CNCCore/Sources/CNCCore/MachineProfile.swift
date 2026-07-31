@@ -65,5 +65,30 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         if let v = settings["$100"] { stepsPerMmX = v }
         if let v = settings["$101"] { stepsPerMmY = v }
         if let v = settings["$102"] { stepsPerMmZ = v }
+        if let dir = settings["$3"] {
+            let mask = Int(dir)
+            invertX = (mask & 1) != 0
+            invertY = (mask & 2) != 0
+            invertZ = (mask & 4) != 0
+        }
+    }
+
+    /// GRBL `$3` direction invert mask (bit0=X, bit1=Y, bit2=Z).
+    public var directionInvertMask: Int {
+        var mask = 0
+        if invertX { mask |= 1 }
+        if invertY { mask |= 2 }
+        if invertZ { mask |= 4 }
+        return mask
+    }
+
+    /// Correct steps/mm after a distance check: `new = current × (commanded / measured)`.
+    public static func correctedStepsPerMm(
+        current: Double,
+        commandedMm: Double,
+        measuredMm: Double
+    ) -> Double? {
+        guard current > 0, commandedMm > 0, measuredMm > 0.1 else { return nil }
+        return current * (commandedMm / measuredMm)
     }
 }

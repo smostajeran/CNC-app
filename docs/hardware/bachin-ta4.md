@@ -59,6 +59,8 @@ Host PC / Android  --USB serial G-code-->  ATmega328P Nano + GRBL 1.1f
 
 ## Live probe status
 
-See [grbl-probe.md](./grbl-probe.md).
+**First step:** verify firmware — [firmware-checklist.md](./firmware-checklist.md), then [grbl-probe.md](./grbl-probe.md).
 
-In **TA4Host**: Connect → **Probe $$/$I** applies `$130`/`$131`/`$100`… into the session `MachineProfile`. CLI: `python3 scripts/probe-grbl.py`.
+Common user complaints: [user-pain-points.md](./user-pain-points.md).
+
+In **Quill**: Setup → Connect → **Check machine** classifies GRBL build and applies `$130`/`$131`/`$100`… into `MachineProfile`. CLI: `python3 scripts/probe-grbl.py`.

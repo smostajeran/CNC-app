@@ -4,14 +4,17 @@
 
 **Problem:** Stock host software (“Panda” / Bachin Draw) is outdated.
 
-**v1 — macOS host app (`TA4Host`):** native SwiftUI app that replaces the essential Panda workflow over **USB serial GRBL 1.1**:
+**v1 — macOS host app (`Quill`):** native SwiftUI app for **home hobbyists** that replaces the essential Panda workflow over **USB serial GRBL 1.1**:
 
-- Connect / disconnect, console (`$$`, `$I`)
-- Status, soft-reset, unlock (`$X`), halt
+- Guided **Setup → Move → Calibrate → Draw** shell with plain-language copy (macOS 26 **Liquid Glass** UI)
+- Drawing surface calibration: paper size, start corner (work zero), ruler check for steps/mm
+- Connect / disconnect, **Check machine** (probe `$$` / `$I`), firmware readiness
+- Status, soft-reset, unlock (`$X`), halt (Halt always in toolbar; recovery under **Advanced**)
 - Jog X/Y, pen up/down (Z as mm height, not spindle RPM)
 - Load G-code and stream with `ok`-based flow control
 - Import simple SVG paths → pen G-code (workspace ~**390 × 200 mm**)
 - 2D path preview and run progress
+- **Advanced:** console, axis invert / `$3`, factory reset
 
 **Shared core:** `CNCCore` Swift package (serial, GRBL protocol, streamer, SVG→G-code, machine profile).
 

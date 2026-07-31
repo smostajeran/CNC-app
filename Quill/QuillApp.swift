@@ -1,15 +1,16 @@
 import SwiftUI
 
 @main
-struct TA4HostApp: App {
+struct QuillApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("TA4Host") {
+        WindowGroup("Quill") {
             ContentView()
                 .environmentObject(model)
-                .frame(minWidth: 960, minHeight: 640)
+                .frame(minWidth: 980, minHeight: 680)
         }
+        .defaultSize(width: 1100, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {}
         }

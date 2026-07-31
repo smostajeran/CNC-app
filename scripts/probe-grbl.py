@@ -108,7 +108,53 @@ def extract_travel(settings: str) -> dict[str, str]:
             travel["y_steps_mm"] = line.split("=", 1)[1].split(" ", 1)[0]
         elif line.startswith("$102="):
             travel["z_steps_mm"] = line.split("=", 1)[1].split(" ", 1)[0]
+        elif line.startswith("$32="):
+            travel["laser_mode"] = line.split("=", 1)[1].split(" ", 1)[0]
     return travel
+
+
+def assess_firmware(banner: str, build_info: str, travel: dict[str, str]) -> dict[str, str]:
+    """Classify GRBL build for TA-4 readiness (mirrors CNCCore FirmwareAssessment)."""
+    import re
+
+    blob = f"{build_info}\n{banner}".strip()
+    match = re.search(r"1\.1[a-zA-Z]?", blob)
+    version = match.group(0) if match else "unknown"
+    notes: list[str] = []
+    lower = blob.lower()
+
+    if not blob:
+        return {
+            "verdict": "unknown",
+            "version": version,
+            "summary": "No GRBL banner or $I — device not connected.",
+            "notes": "Plug USB + 12V, then re-run probe. See docs/hardware/firmware-checklist.md",
+        }
+
+    if travel.get("laser_mode") in ("1", "1.0", "1.000"):
+        notes.append("$32 laser mode is ON — disable for pen plotting.")
+
+    if "1.1z" in lower:
+        notes.append("Vendor 1.1z — $J= jog may fail on third-party senders.")
+        verdict, summary = "caution", "GRBL 1.1z (vendor) — test jog before jobs."
+    elif "grbl" in lower or "[ver:" in lower:
+        if version.startswith("1.1"):
+            verdict, summary = "compatible", "GRBL 1.1 detected — OK after a test jog."
+            notes.append("Suitable for Quill ok-paced streaming.")
+        else:
+            verdict, summary = "caution", "GRBL present; version unclear — test jog."
+    else:
+        verdict, summary = "incompatible", "Response did not look like GRBL."
+
+    if "x_max_mm" in travel and "y_max_mm" in travel:
+        notes.append(f"Travel {travel['x_max_mm']}×{travel['y_max_mm']} mm ($130×$131).")
+
+    return {
+        "verdict": verdict,
+        "version": version,
+        "summary": summary,
+        "notes": "; ".join(notes) if notes else "(none)",
+    }
 
 
 def write_report(
@@ -124,6 +170,8 @@ def write_report(
         f"**Status:** {status}",
         f"**Probed at:** {now}",
         "",
+        "See also: [firmware-checklist.md](./firmware-checklist.md)",
+        "",
         "## Host scan",
         "",
         f"Candidate serial ports: `{candidates if candidates else 'none'}`",
@@ -132,10 +180,14 @@ def write_report(
 
     if probed is None:
         lines += [
+            "## Firmware assessment",
+            "",
+            "**Verdict:** `unknown` — device not connected.",
+            "",
             "## Result",
             "",
             "No Bachin / Arduino Nano USB serial device was present.",
-            "Connect the TA-4 with its USB cable (power adapter on), then re-run:",
+            "Connect the TA-4 with its USB cable (**12V power on**), then re-run:",
             "",
             "```bash",
             "python3 -m pip install pyserial",
@@ -148,7 +200,19 @@ def write_report(
         ]
     else:
         travel = extract_travel(probed.get("settings", ""))
+        assessment = assess_firmware(
+            probed.get("banner", ""),
+            probed.get("build_info", ""),
+            travel,
+        )
         lines += [
+            "## Firmware assessment",
+            "",
+            f"- **Verdict:** `{assessment['verdict']}`",
+            f"- **Version:** `{assessment['version']}`",
+            f"- **Summary:** {assessment['summary']}",
+            f"- **Notes:** {assessment['notes']}",
+            "",
             "## Connection",
             "",
             f"- Port: `{probed['port']}`",
@@ -213,7 +277,10 @@ def main() -> int:
     if not ok:
         print("Connected but did not receive GRBL $$ / $I. Try another baud or port.", file=sys.stderr)
         return 1
+    travel = extract_travel(probed.get("settings", ""))
+    assessment = assess_firmware(probed.get("banner", ""), probed.get("build_info", ""), travel)
     print(probed.get("build_info") or probed.get("banner"))
+    print(f"Firmware: {assessment['verdict']} · {assessment['version']} — {assessment['summary']}")
     return 0
 
 

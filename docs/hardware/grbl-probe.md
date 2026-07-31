@@ -1,16 +1,22 @@
 # GRBL live probe
 
 **Status:** not connected — no USB serial candidate
-**Probed at:** 2026-07-31 13:25:48 UTC
+**Probed at:** 2026-07-31 13:42:57 UTC
+
+See also: [firmware-checklist.md](./firmware-checklist.md)
 
 ## Host scan
 
 Candidate serial ports: `none`
 
+## Firmware assessment
+
+**Verdict:** `unknown` — device not connected.
+
 ## Result
 
 No Bachin / Arduino Nano USB serial device was present.
-Connect the TA-4 with its USB cable (power adapter on), then re-run:
+Connect the TA-4 with its USB cable (**12V power on**), then re-run:
 
 ```bash
 python3 -m pip install pyserial

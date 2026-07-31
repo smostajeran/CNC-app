@@ -40,6 +40,7 @@ final class SVGToGCodeTests: XCTestCase {
 
     func testSettingsParse() {
         let text = """
+        $3=3
         $100=80.000
         $130=390.000
         $131=200.000
@@ -49,11 +50,16 @@ final class SVGToGCodeTests: XCTestCase {
         XCTAssertEqual(settings["$100"], 80)
         XCTAssertEqual(settings["$130"], 390)
         XCTAssertEqual(settings["$131"], 200)
+        XCTAssertEqual(settings["$3"], 3)
 
         var profile = MachineProfile.ta4
         profile.applyGRBLSettings(settings)
         XCTAssertEqual(profile.travelX, 390)
         XCTAssertEqual(profile.travelY, 200)
         XCTAssertEqual(profile.stepsPerMmX, 80)
+        XCTAssertTrue(profile.invertX)
+        XCTAssertTrue(profile.invertY)
+        XCTAssertFalse(profile.invertZ)
+        XCTAssertEqual(profile.directionInvertMask, 3)
     }
 }

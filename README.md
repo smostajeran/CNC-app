@@ -1,4 +1,4 @@
-# CNC-app / TA4Host
+# CNC-app / Quill
 
 Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replacement for the outdated Panda / Bachin Draw software.
 
@@ -6,6 +6,8 @@ Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replaceme
 
 - [Product goal](docs/PRODUCT_GOAL.md)
 - [TA-4 hardware](docs/hardware/bachin-ta4.md)
+- [Firmware checklist](docs/hardware/firmware-checklist.md) — verify GRBL before jobs
+- [User pain points](docs/hardware/user-pain-points.md)
 - [GRBL probe log](docs/hardware/grbl-probe.md)
 
 ## Project layout
@@ -13,8 +15,8 @@ Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replaceme
 | Path | Role |
 |------|------|
 | `CNCCore/` | Swift package — GRBL, serial, streaming, SVG→G-code |
-| `TA4Host/` | SwiftUI macOS app |
-| `project.yml` | XcodeGen spec → `TA4Host.xcodeproj` |
+| `Quill/` | SwiftUI macOS app |
+| `project.yml` | XcodeGen spec → `Quill.xcodeproj` |
 | `scripts/probe-grbl.py` | CLI probe for `$I` / `$$` |
 
 ## Build & run
@@ -25,7 +27,7 @@ Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replaceme
 cd /Users/sasanmostajeran/Documents/CNC-app
 brew install xcodegen   # if needed
 ./scripts/generate-xcode.sh
-open TA4Host.xcodeproj
+open Quill.xcodeproj
 ```
 
 Or:
@@ -33,7 +35,7 @@ Or:
 ```bash
 cd /Users/sasanmostajeran/Documents/CNC-app
 xcodegen generate --spec project.yml
-open TA4Host.xcodeproj
+open Quill.xcodeproj
 ```
 
 CLI checks:
@@ -42,7 +44,7 @@ CLI checks:
 cd /Users/sasanmostajeran/Documents/CNC-app
 swift test --package-path CNCCore
 xcodegen generate --spec project.yml
-xcodebuild -scheme TA4Host -configuration Debug build
+xcodebuild -scheme Quill -configuration Debug build
 ```
 
 ## Probe the machine (USB)
@@ -52,4 +54,4 @@ python3 -m pip install -r requirements.txt
 python3 scripts/probe-grbl.py
 ```
 
-In the app: Connect → Probe writes live settings into the session and console.
+In the app: Setup → Connect → Check machine writes live settings into the session and console.

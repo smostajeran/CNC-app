@@ -90,6 +90,44 @@ public final class GRBLClient: @unchecked Sendable {
         try sendLine("$X")
     }
 
+    /// Reset all GRBL EEPROM settings to firmware defaults. Destructive — confirm in UI first.
+    public func factoryResetSettings() throws {
+        try sendLine("$RST=*")
+    }
+
+    /// Apply direction invert mask as GRBL `$3` (bit0=X, bit1=Y, bit2=Z).
+    public func applyDirectionInvert(x: Bool, y: Bool, z: Bool) throws {
+        var mask = 0
+        if x { mask |= 1 }
+        if y { mask |= 2 }
+        if z { mask |= 4 }
+        try sendLine("$3=\(mask)")
+    }
+
+    /// Write a GRBL `$` setting (e.g. `$130=390`).
+    public func setSetting(_ key: String, value: Double) throws {
+        let name = key.hasPrefix("$") ? key : "$\(key)"
+        try sendLine("\(name)=\(fmt(value))")
+    }
+
+    /// Soft max travel in mm (`$130` / `$131`).
+    public func applyTravelLimits(x: Double, y: Double) throws {
+        try setSetting("$130", value: x)
+        try setSetting("$131", value: y)
+    }
+
+    /// Steps per mm (`$100` / `$101`).
+    public func applyStepsPerMm(x: Double?, y: Double?) throws {
+        if let x { try setSetting("$100", value: x) }
+        if let y { try setSetting("$101", value: y) }
+    }
+
+    /// Treat the current pen position as work zero (G54).
+    public func setWorkOriginZero() throws {
+        try sendLine("G54")
+        try sendLine("G10 L20 P1 X0 Y0")
+    }
+
     public func halt() throws {
         try feedHold()
         Thread.sleep(forTimeInterval: 0.05)
