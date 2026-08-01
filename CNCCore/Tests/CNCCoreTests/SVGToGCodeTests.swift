@@ -88,4 +88,34 @@ final class SVGToGCodeTests: XCTestCase {
         let gcode = SingleLineText.gcode(text: "AB", profile: .ta4)
         XCTAssertTrue(gcode.contains("G1"))
     }
+
+    func testTranslateTransform() throws {
+        let svg = #"<svg viewBox="0 0 100 100"><path transform="translate(10 20)" d="M0 0 L10 0"/></svg>"#
+        let job = try SVGToGCode.plotJob(from: svg, profile: .ta4, fitToWorkspace: false)
+        XCTAssertTrue(job.commands.contains(.move(PlotPoint(x: 10, y: 20))))
+        XCTAssertTrue(job.commands.contains(.line(PlotPoint(x: 20, y: 20))))
+    }
+
+    func testViewBoxOriginShift() throws {
+        let svg = #"<svg viewBox="50 50 100 100"><path d="M50 50 L60 50"/></svg>"#
+        let job = try SVGToGCode.plotJob(from: svg, profile: .ta4, fitToWorkspace: false)
+        XCTAssertTrue(job.commands.contains(.move(PlotPoint(x: 0, y: 0))))
+        XCTAssertTrue(job.commands.contains(.line(PlotPoint(x: 10, y: 0))))
+    }
+
+    func testMachineProfileDefaultsRoundTrip() {
+        let defaults = UserDefaults(suiteName: "ta4host.tests.\(UUID().uuidString)")!
+        defer { defaults.removePersistentDomain(forName: defaults.suiteName!) }
+
+        var profile = MachineProfile.ta4
+        profile.invertX = true
+        profile.penUpZ = 6.5
+        profile.drawFeed = 1200
+        profile.saveToDefaults(defaults)
+
+        let loaded = MachineProfile.loadFromDefaults(defaults)
+        XCTAssertEqual(loaded?.invertX, true)
+        XCTAssertEqual(loaded?.penUpZ, 6.5)
+        XCTAssertEqual(loaded?.drawFeed, 1200)
+    }
 }

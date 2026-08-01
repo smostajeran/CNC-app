@@ -35,7 +35,7 @@ Sourced from Bachin wiki tips, Apple Support Communities, and GRBL issues:
 
 ## Integrations
 
-- **Inkscape:** export TA-4 workspace SVG; watch open file for Save → reload; layer/stroke colors → pen-change pauses
+- **Inkscape:** export TA-4 workspace SVG; honor viewBox + translate/scale/matrix; watch open file for Save → reload; layer/stroke colors → pen-change pauses
 - **macOS:** drag-drop, paste, document types, recent jobs, `ta4host://` URL scheme
 - **Other CAM/senders:** normalize servo pen G-code from Candle / Inkscape extensions
 - **CLI:** `scripts/probe-grbl.py`, `scripts/send-gcode.py`

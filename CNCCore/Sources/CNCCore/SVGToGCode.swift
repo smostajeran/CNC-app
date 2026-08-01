@@ -19,8 +19,14 @@ public enum SVGToGCode {
         profile: MachineProfile = .ta4,
         fitToWorkspace: Bool = true
     ) throws -> PlotJob {
-        let commands = try extractCommands(from: svg)
+        var commands = try extractCommands(from: svg)
         guard !commands.isEmpty else { throw SVGToGCodeError.noPaths }
+
+        // Honor root viewBox origin (Inkscape often uses non-zero minX/minY).
+        if let vb = parseViewBox(svg), (vb.minX != 0 || vb.minY != 0) {
+            let shift = Affine2D.translate(tx: -vb.minX, ty: -vb.minY)
+            commands = applyAffine(commands, shift)
+        }
 
         var job = PlotJob(commands: commands)
         if fitToWorkspace {
@@ -101,7 +107,8 @@ public enum SVGToGCode {
                     let attrs = String(svg[attrsR])
                     let body = String(svg[bodyR])
                     let color = strokeColor(in: attrs) ?? strokeColor(in: body)
-                    let cmds = extractPrimitiveCommands(from: body)
+                    let groupXf = parseTransform(attrs) ?? .identity
+                    let cmds = applyAffine(extractPrimitiveCommands(from: body), groupXf)
                     if !cmds.isEmpty {
                         layers.append((color, cmds))
                     }
@@ -153,7 +160,8 @@ public enum SVGToGCode {
             let attrs = String(svg[r])
             guard let d = attrString(attrs, "d") else { continue }
             let color = strokeColor(in: attrs) ?? "#000000"
-            let cmds = parsePathD(d)
+            let xf = parseTransform(attrs) ?? .identity
+            let cmds = applyAffine(parsePathD(d), xf)
             if !cmds.isEmpty { result.append((color, cmds)) }
         }
         let colors = Set(result.map(\.0))
@@ -163,36 +171,150 @@ public enum SVGToGCode {
     private static func extractPrimitiveCommands(from svg: String) -> [PlotCommand] {
         var commands: [PlotCommand] = []
 
-        for match in matches(svg, pattern: #"<path[^>]*\sd=["']([^"']+)["']"#) {
-            commands.append(contentsOf: parsePathD(match))
+        for element in matches(svg, pattern: #"<path\b[^>]*>"#) {
+            guard let d = attrString(element, "d") else { continue }
+            let xf = parseTransform(element) ?? .identity
+            commands.append(contentsOf: applyAffine(parsePathD(d), xf))
         }
-        for match in matches(svg, pattern: #"<polyline[^>]*\spoints=["']([^"']+)["']"#) {
-            commands.append(contentsOf: polylineCommands(match, closed: false))
+        for element in matches(svg, pattern: #"<polyline\b[^>]*>"#) {
+            guard let pts = attrString(element, "points") else { continue }
+            let xf = parseTransform(element) ?? .identity
+            commands.append(contentsOf: applyAffine(polylineCommands(pts, closed: false), xf))
         }
-        for match in matches(svg, pattern: #"<polygon[^>]*\spoints=["']([^"']+)["']"#) {
-            commands.append(contentsOf: polylineCommands(match, closed: true))
+        for element in matches(svg, pattern: #"<polygon\b[^>]*>"#) {
+            guard let pts = attrString(element, "points") else { continue }
+            let xf = parseTransform(element) ?? .identity
+            commands.append(contentsOf: applyAffine(polylineCommands(pts, closed: true), xf))
         }
-        for match in matches(svg, pattern: #"<line[^>]*>"#) {
-            if let lineCmds = parseLineElement(match) {
-                commands.append(contentsOf: lineCmds)
+        for element in matches(svg, pattern: #"<line\b[^>]*>"#) {
+            if let lineCmds = parseLineElement(element) {
+                let xf = parseTransform(element) ?? .identity
+                commands.append(contentsOf: applyAffine(lineCmds, xf))
             }
         }
-        for match in matches(svg, pattern: #"<rect[^>]*>"#) {
-            if let rectCmds = parseRectElement(match) {
-                commands.append(contentsOf: rectCmds)
+        for element in matches(svg, pattern: #"<rect\b[^>]*>"#) {
+            if let rectCmds = parseRectElement(element) {
+                let xf = parseTransform(element) ?? .identity
+                commands.append(contentsOf: applyAffine(rectCmds, xf))
             }
         }
-        for match in matches(svg, pattern: #"<circle[^>]*>"#) {
-            if let circleCmds = parseCircleElement(match) {
-                commands.append(contentsOf: circleCmds)
+        for element in matches(svg, pattern: #"<circle\b[^>]*>"#) {
+            if let circleCmds = parseCircleElement(element) {
+                let xf = parseTransform(element) ?? .identity
+                commands.append(contentsOf: applyAffine(circleCmds, xf))
             }
         }
-        for match in matches(svg, pattern: #"<ellipse[^>]*>"#) {
-            if let ellipseCmds = parseEllipseElement(match) {
-                commands.append(contentsOf: ellipseCmds)
+        for element in matches(svg, pattern: #"<ellipse\b[^>]*>"#) {
+            if let ellipseCmds = parseEllipseElement(element) {
+                let xf = parseTransform(element) ?? .identity
+                commands.append(contentsOf: applyAffine(ellipseCmds, xf))
             }
         }
         return commands
+    }
+
+    // MARK: - viewBox / transform
+
+    struct ViewBox {
+        var minX: Double
+        var minY: Double
+        var width: Double
+        var height: Double
+    }
+
+    struct Affine2D: Equatable {
+        var a: Double, b: Double, c: Double, d: Double, e: Double, f: Double
+
+        static let identity = Affine2D(a: 1, b: 0, c: 0, d: 1, e: 0, f: 0)
+
+        static func translate(tx: Double, ty: Double) -> Affine2D {
+            Affine2D(a: 1, b: 0, c: 0, d: 1, e: tx, f: ty)
+        }
+
+        static func scale(sx: Double, sy: Double) -> Affine2D {
+            Affine2D(a: sx, b: 0, c: 0, d: sy, e: 0, f: 0)
+        }
+
+        func apply(_ p: PlotPoint) -> PlotPoint {
+            PlotPoint(x: a * p.x + c * p.y + e, y: b * p.x + d * p.y + f)
+        }
+
+        func concatenating(_ o: Affine2D) -> Affine2D {
+            // self ∘ o  (apply o first, then self)
+            Affine2D(
+                a: a * o.a + c * o.b,
+                b: b * o.a + d * o.b,
+                c: a * o.c + c * o.d,
+                d: b * o.c + d * o.d,
+                e: a * o.e + c * o.f + e,
+                f: b * o.e + d * o.f + f
+            )
+        }
+    }
+
+    static func parseViewBox(_ svg: String) -> ViewBox? {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"viewBox\s*=\s*["']([^"']+)["']"#,
+            options: [.caseInsensitive]
+        ) else { return nil }
+        let range = NSRange(svg.startIndex..., in: svg)
+        guard let match = regex.firstMatch(in: svg, options: [], range: range),
+              let r = Range(match.range(at: 1), in: svg) else { return nil }
+        let parts = String(svg[r])
+            .replacingOccurrences(of: ",", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+            .compactMap { Double($0) }
+        guard parts.count == 4 else { return nil }
+        return ViewBox(minX: parts[0], minY: parts[1], width: parts[2], height: parts[3])
+    }
+
+    /// Parses simple `transform="translate(..) scale(..) matrix(..)"` lists.
+    static func parseTransform(_ attrs: String) -> Affine2D? {
+        guard let raw = attrString(attrs, "transform") else { return nil }
+        var result = Affine2D.identity
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(translate|scale|matrix)\s*\(([^)]*)\)"#,
+            options: [.caseInsensitive]
+        ) else { return nil }
+        let range = NSRange(raw.startIndex..., in: raw)
+        for match in regex.matches(in: raw, options: [], range: range) {
+            guard let nameR = Range(match.range(at: 1), in: raw),
+                  let argsR = Range(match.range(at: 2), in: raw) else { continue }
+            let name = String(raw[nameR]).lowercased()
+            let nums = String(raw[argsR])
+                .replacingOccurrences(of: ",", with: " ")
+                .split(whereSeparator: { $0.isWhitespace })
+                .compactMap { Double($0) }
+            let next: Affine2D?
+            switch name {
+            case "translate":
+                guard let tx = nums.first else { next = nil; break }
+                next = .translate(tx: tx, ty: nums.count > 1 ? nums[1] : 0)
+            case "scale":
+                guard let sx = nums.first else { next = nil; break }
+                next = .scale(sx: sx, sy: nums.count > 1 ? nums[1] : sx)
+            case "matrix":
+                guard nums.count >= 6 else { next = nil; break }
+                next = Affine2D(a: nums[0], b: nums[1], c: nums[2], d: nums[3], e: nums[4], f: nums[5])
+            default:
+                next = nil
+            }
+            if let next {
+                result = result.concatenating(next)
+            }
+        }
+        return result
+    }
+
+    static func applyAffine(_ commands: [PlotCommand], _ xf: Affine2D) -> [PlotCommand] {
+        if xf == .identity { return commands }
+        return commands.map { cmd in
+            switch cmd {
+            case .move(let p): return .move(xf.apply(p))
+            case .line(let p): return .line(xf.apply(p))
+            case .penChange(let label): return .penChange(label)
+            }
+        }
     }
 
     private static func strokeColor(in text: String) -> String? {
