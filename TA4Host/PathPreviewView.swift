@@ -41,9 +41,10 @@ struct PathPreviewView: View {
                 return
             }
 
+            let drawable = job.simplified()
             var path = Path()
             var started = false
-            for cmd in job.commands {
+            for cmd in drawable.commands {
                 switch cmd {
                 case .move(let p):
                     path.move(to: map(p))
@@ -55,6 +56,8 @@ struct PathPreviewView: View {
                     } else {
                         path.addLine(to: map(p))
                     }
+                case .penChange:
+                    started = false
                 }
             }
             context.stroke(path, with: .color(.accentColor), lineWidth: 1.5)

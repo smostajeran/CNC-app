@@ -9,15 +9,19 @@ public enum StreamerState: Equatable, Sendable {
     case fault(String)
 }
 
-/// Classic GRBL send-on-`ok` streamer (line buffered).
+/// GRBL character-window streamer (classic 127-byte RX planner buffer).
 public final class GCodeStreamer: @unchecked Sendable {
+    /// GRBL default serial RX buffer size.
+    public static let rxBufferSize = 127
+
     public private(set) var lines: [String] = []
     public private(set) var index: Int = 0
     public private(set) var state: StreamerState = .idle
     public private(set) var awaitingOk: Bool = false
+    public private(set) var bytesInFlight: Int = 0
 
-    /// Lines currently considered in-flight awaiting `ok` (simple protocol: 1).
-    private let maxInFlight = 1
+    /// Byte costs (line UTF-8 length + newline) for each in-flight line awaiting `ok`.
+    private var inFlightCosts: [Int] = []
 
     public var progress: Double {
         guard !lines.isEmpty else { return 0 }
@@ -29,21 +33,21 @@ public final class GCodeStreamer: @unchecked Sendable {
         return lines[index]
     }
 
+    public var inFlightCount: Int { inFlightCosts.count }
+
     public init() {}
 
     public func load(text: String) {
         lines = Self.normalize(text)
-        index = 0
-        awaitingOk = false
-        state = lines.isEmpty ? .idle : .idle
+        resetCounters()
+        state = .idle
     }
 
     public func load(lines input: [String]) {
         lines = input
             .map { Self.sanitizeLine($0) }
             .filter { !$0.isEmpty }
-        index = 0
-        awaitingOk = false
+        resetCounters()
         state = .idle
     }
 
@@ -56,8 +60,7 @@ public final class GCodeStreamer: @unchecked Sendable {
             state = .running
             return
         }
-        index = 0
-        awaitingOk = false
+        resetCounters()
         state = .running
     }
 
@@ -72,24 +75,29 @@ public final class GCodeStreamer: @unchecked Sendable {
     public func cancel() {
         state = .cancelled
         awaitingOk = false
+        inFlightCosts.removeAll()
+        bytesInFlight = 0
     }
 
     public func reset() {
-        index = 0
-        awaitingOk = false
+        resetCounters()
         state = .idle
     }
 
-    /// Returns the next line to send, if the streamer is ready for more data.
+    /// Returns the next line if it fits in the remaining RX buffer window.
     public func nextLineToSend() -> String? {
         guard state == .running else { return nil }
-        guard !awaitingOk || maxInFlight > 1 else { return nil }
         guard index < lines.count else {
-            if !awaitingOk { state = .completed }
+            if inFlightCosts.isEmpty { state = .completed }
             return nil
         }
         let line = lines[index]
+        let cost = Self.byteCost(line)
+        guard bytesInFlight + cost <= Self.rxBufferSize else { return nil }
+
         index += 1
+        bytesInFlight += cost
+        inFlightCosts.append(cost)
         awaitingOk = true
         return line
     }
@@ -102,12 +110,18 @@ public final class GCodeStreamer: @unchecked Sendable {
         if trimmed.hasPrefix("error") || trimmed.hasPrefix("ALARM") {
             state = .fault(trimmed)
             awaitingOk = false
+            inFlightCosts.removeAll()
+            bytesInFlight = 0
             return
         }
 
         if trimmed == "ok" {
-            awaitingOk = false
-            if index >= lines.count {
+            if !inFlightCosts.isEmpty {
+                let cost = inFlightCosts.removeFirst()
+                bytesInFlight = max(0, bytesInFlight - cost)
+            }
+            awaitingOk = !inFlightCosts.isEmpty
+            if index >= lines.count && inFlightCosts.isEmpty {
                 state = .completed
             }
         }
@@ -127,5 +141,16 @@ public final class GCodeStreamer: @unchecked Sendable {
         }
         if s.hasPrefix("("), s.hasSuffix(")") { return "" }
         return s
+    }
+
+    public static func byteCost(_ line: String) -> Int {
+        line.utf8.count + 1 // trailing newline
+    }
+
+    private func resetCounters() {
+        index = 0
+        awaitingOk = false
+        bytesInFlight = 0
+        inFlightCosts.removeAll()
     }
 }

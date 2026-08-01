@@ -57,6 +57,8 @@ public struct MachineProfile: Equatable, Sendable, Codable {
 
     public static let ta4 = MachineProfile()
 
+    private static let defaultsKey = "ta4host.machineProfile"
+
     /// Merge GRBL `$$` settings into this profile when present.
     public mutating func applyGRBLSettings(_ settings: [String: Double]) {
         if let v = settings["$130"] { travelX = v }
@@ -65,5 +67,16 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         if let v = settings["$100"] { stepsPerMmX = v }
         if let v = settings["$101"] { stepsPerMmY = v }
         if let v = settings["$102"] { stepsPerMmZ = v }
+    }
+
+    public func saveToDefaults(_ defaults: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(self) {
+            defaults.set(data, forKey: Self.defaultsKey)
+        }
+    }
+
+    public static func loadFromDefaults(_ defaults: UserDefaults = .standard) -> MachineProfile? {
+        guard let data = defaults.data(forKey: defaultsKey) else { return nil }
+        return try? JSONDecoder().decode(MachineProfile.self, from: data)
     }
 }

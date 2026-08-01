@@ -13,6 +13,8 @@ public struct PlotPoint: Equatable, Sendable {
 public enum PlotCommand: Equatable, Sendable {
     case move(PlotPoint) // pen up travel
     case line(PlotPoint) // pen down draw
+    /// Pause for pen/color change (emits `M0` in G-code).
+    case penChange(String)
 }
 
 public struct PlotBounds: Equatable, Sendable {
@@ -47,8 +49,36 @@ public struct PlotJob: Equatable, Sendable {
         commands.compactMap {
             switch $0 {
             case .move(let p), .line(let p): return p
+            case .penChange: return nil
             }
         }
+    }
+
+    /// Reduce command count for UI preview of dense jobs.
+    public func simplified(maxSegments: Int = 4_000) -> PlotJob {
+        guard commands.count > maxSegments else { return self }
+        let stride = max(commands.count / maxSegments, 2)
+        var out: [PlotCommand] = []
+        out.reserveCapacity(maxSegments + 8)
+        var i = 0
+        while i < commands.count {
+            let cmd = commands[i]
+            switch cmd {
+            case .penChange:
+                out.append(cmd)
+                i += 1
+            case .move:
+                out.append(cmd)
+                i += 1
+            case .line:
+                out.append(cmd)
+                i += stride
+            }
+        }
+        if let last = commands.last, out.last != last {
+            out.append(last)
+        }
+        return PlotJob(commands: out)
     }
 
     private static func computeBounds(_ commands: [PlotCommand]) -> PlotBounds {
@@ -58,15 +88,16 @@ public struct PlotJob: Equatable, Sendable {
         var maxY = -Double.infinity
         var any = false
         for cmd in commands {
-            let p: PlotPoint
             switch cmd {
-            case .move(let pt), .line(let pt): p = pt
+            case .move(let pt), .line(let pt):
+                any = true
+                minX = min(minX, pt.x)
+                minY = min(minY, pt.y)
+                maxX = max(maxX, pt.x)
+                maxY = max(maxY, pt.y)
+            case .penChange:
+                continue
             }
-            any = true
-            minX = min(minX, p.x)
-            minY = min(minY, p.y)
-            maxX = max(maxX, p.x)
-            maxY = max(maxY, p.y)
         }
         guard any else { return .zero }
         return PlotBounds(minX: minX, minY: minY, maxX: maxX, maxY: maxY)

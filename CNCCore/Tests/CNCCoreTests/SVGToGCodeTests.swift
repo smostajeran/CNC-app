@@ -30,6 +30,31 @@ final class SVGToGCodeTests: XCTestCase {
         XCTAssertTrue(cmds.contains(.line(PlotPoint(x: 0, y: 0))))
     }
 
+    func testCubicCurveProducesSegments() {
+        let cmds = SVGToGCode.parsePathD("M0 0 C10 0 10 10 0 10")
+        XCTAssertEqual(cmds.first, .move(PlotPoint(x: 0, y: 0)))
+        XCTAssertGreaterThan(cmds.count, 8)
+        if case .line(let last) = cmds.last {
+            XCTAssertEqual(last.x, 0, accuracy: 0.01)
+            XCTAssertEqual(last.y, 10, accuracy: 0.01)
+        } else {
+            XCTFail("expected final line")
+        }
+    }
+
+    func testCircleElement() throws {
+        let svg = #"<svg><circle cx="50" cy="50" r="20"/></svg>"#
+        let job = try SVGToGCode.plotJob(from: svg, profile: .ta4, fitToWorkspace: false)
+        XCTAssertGreaterThan(job.commands.count, 10)
+    }
+
+    func testInkscapeTemplateHasWorkspace() {
+        let svg = InkscapeTemplate.workspaceSVG(profile: .ta4)
+        XCTAssertTrue(svg.contains("390"))
+        XCTAssertTrue(svg.contains("200"))
+        XCTAssertTrue(svg.contains("inkscape:label"))
+    }
+
     func testStatusParse() {
         let status = GRBLStatus.parse("<Idle|MPos:1.000,2.000,3.000|FS:0,0>")
         XCTAssertEqual(status?.state, "Idle")
@@ -55,5 +80,12 @@ final class SVGToGCodeTests: XCTestCase {
         XCTAssertEqual(profile.travelX, 390)
         XCTAssertEqual(profile.travelY, 200)
         XCTAssertEqual(profile.stepsPerMmX, 80)
+    }
+
+    func testSingleLineText() {
+        let job = SingleLineText.plotJob(text: "Hi", heightMm: 10, origin: PlotPoint(x: 0, y: 0))
+        XCTAssertFalse(job.commands.isEmpty)
+        let gcode = SingleLineText.gcode(text: "AB", profile: .ta4)
+        XCTAssertTrue(gcode.contains("G1"))
     }
 }
