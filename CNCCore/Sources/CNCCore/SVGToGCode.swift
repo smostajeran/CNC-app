@@ -782,7 +782,7 @@ public enum SVGToGCode {
         let v1y = (y1p - cyp) / ry_
         let v2x = (-x1p - cxp) / rx_
         let v2y = (-y1p - cyp) / ry_
-        var theta1 = angle(1, 0, v1x, v1y)
+        let theta1 = angle(1, 0, v1x, v1y)
         var dtheta = angle(v1x, v1y, v2x, v2y)
         if !sweep && dtheta > 0 { dtheta -= 2 * .pi }
         if sweep && dtheta < 0 { dtheta += 2 * .pi }

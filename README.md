@@ -27,10 +27,13 @@ brew install xcodegen   # if needed
 open TA4Host.xcodeproj
 ```
 
-CLI checks:
+CLI checks / build:
 
 ```bash
 swift test --package-path CNCCore
+# Full macOS app (requires Xcode + XcodeGen on a Mac):
+./scripts/build-mac.sh
+# Or manually:
 xcodegen generate --spec project.yml
 xcodebuild -scheme TA4Host -configuration Debug build
 ```

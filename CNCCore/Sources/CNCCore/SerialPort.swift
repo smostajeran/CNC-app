@@ -2,6 +2,8 @@ import Foundation
 
 #if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
 #endif
 
 public enum SerialPortError: Error, LocalizedError, Equatable {
@@ -39,12 +41,12 @@ public final class SerialPort: @unchecked Sendable {
     public func open(path: String, baudRate: Int = 115_200) throws {
         if isOpen { close() }
 
-        let handle = Darwin.open(path, O_RDWR | O_NOCTTY | O_NONBLOCK)
+        let handle = path.withCString { GlibcOrDarwin.openPath($0, O_RDWR | O_NOCTTY | O_NONBLOCK) }
         guard handle >= 0 else { throw SerialPortError.openFailed(path) }
 
         var options = termios()
         guard tcgetattr(handle, &options) == 0 else {
-            Darwin.close(handle)
+            _ = GlibcOrDarwin.close(handle)
             throw SerialPortError.configureFailed
         }
 
@@ -68,7 +70,7 @@ public final class SerialPort: @unchecked Sendable {
         cfsetospeed(&options, speed)
 
         guard tcsetattr(handle, TCSANOW, &options) == 0 else {
-            Darwin.close(handle)
+            _ = GlibcOrDarwin.close(handle)
             throw SerialPortError.configureFailed
         }
 
@@ -82,7 +84,7 @@ public final class SerialPort: @unchecked Sendable {
 
     public func close() {
         guard fd >= 0 else { return }
-        Darwin.close(fd)
+        _ = GlibcOrDarwin.close(fd)
         fd = -1
         path = nil
     }
@@ -94,7 +96,7 @@ public final class SerialPort: @unchecked Sendable {
             var sent = 0
             let total = data.count
             while sent < total {
-                let n = Darwin.write(fd, base.advanced(by: sent), total - sent)
+                let n = GlibcOrDarwin.write(fd, base.advanced(by: sent), total - sent)
                 if n < 0 {
                     if errno == EINTR { continue }
                     if errno == EAGAIN {
@@ -124,7 +126,7 @@ public final class SerialPort: @unchecked Sendable {
         }
 
         var buffer = [UInt8](repeating: 0, count: maxLength)
-        let n = Darwin.read(fd, &buffer, maxLength)
+        let n = GlibcOrDarwin.read(fd, &buffer, maxLength)
         if n < 0 {
             if errno == EINTR || errno == EAGAIN { return Data() }
             throw SerialPortError.readFailed
@@ -143,5 +145,40 @@ public final class SerialPort: @unchecked Sendable {
         case 230_400: return speed_t(B230400)
         default: return speed_t(B115200)
         }
+    }
+}
+
+/// Thin shim so POSIX calls resolve on Darwin and Glibc.
+private enum GlibcOrDarwin {
+    static func openPath(_ path: UnsafePointer<CChar>, _ oflag: Int32) -> Int32 {
+        #if canImport(Darwin)
+        return Darwin.open(path, oflag)
+        #else
+        return Glibc.open(path, oflag)
+        #endif
+    }
+
+    static func close(_ fd: Int32) -> Int32 {
+        #if canImport(Darwin)
+        return Darwin.close(fd)
+        #else
+        return Glibc.close(fd)
+        #endif
+    }
+
+    static func write(_ fd: Int32, _ buf: UnsafeRawPointer!, _ nbyte: Int) -> Int {
+        #if canImport(Darwin)
+        return Darwin.write(fd, buf, nbyte)
+        #else
+        return Glibc.write(fd, buf, nbyte)
+        #endif
+    }
+
+    static func read(_ fd: Int32, _ buf: UnsafeMutableRawPointer!, _ nbyte: Int) -> Int {
+        #if canImport(Darwin)
+        return Darwin.read(fd, buf, nbyte)
+        #else
+        return Glibc.read(fd, buf, nbyte)
+        #endif
     }
 }

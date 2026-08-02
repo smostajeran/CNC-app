@@ -77,8 +77,9 @@ public struct InkDocument: Equatable, Sendable, Codable {
                 maxP = max(maxP, s.pressure)
             }
             let width = 0.2 + maxP * 1.8
+            let w = String(format: "%.3f", width)
             paths.append(
-                String(format: #"<path d="%@" fill="none" stroke="#000" stroke-width="%.3f"/>"#, d, width)
+                "<path d=\"\(d)\" fill=\"none\" stroke=\"#000\" stroke-width=\"\(w)\"/>"
             )
         }
         return """
