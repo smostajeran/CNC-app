@@ -110,7 +110,7 @@ final class InkNSView: NSView {
         endStroke()
     }
 
-    override func tabletProximity(_ event: NSEvent) {
+    override func tabletProximity(with event: NSEvent) {
         // Ensure tablet events route here when stylus enters proximity.
         window?.makeFirstResponder(self)
     }
