@@ -11,20 +11,35 @@ final class GCodeStreamerTests: XCTestCase {
         XCTAssertEqual(lines, ["G0 X0", "G1 Y1"])
     }
 
-    func testOkPacedStreaming() {
+    func testOkPacedStreamingStillWorksForSingleLine() {
         let s = GCodeStreamer()
         s.load(lines: ["G0 X0", "G0 Y1", "M2"])
         s.start()
 
         XCTAssertEqual(s.nextLineToSend(), "G0 X0")
-        XCTAssertNil(s.nextLineToSend()) // waiting for ok
-        s.handleResponse("ok")
+        // Still room in 127-byte window for more short lines
         XCTAssertEqual(s.nextLineToSend(), "G0 Y1")
-        s.handleResponse("ok")
         XCTAssertEqual(s.nextLineToSend(), "M2")
+        XCTAssertNil(s.nextLineToSend())
+        s.handleResponse("ok")
+        s.handleResponse("ok")
         s.handleResponse("ok")
         XCTAssertEqual(s.state, .completed)
         XCTAssertEqual(s.progress, 1.0, accuracy: 0.001)
+    }
+
+    func testCharacterWindowBlocksWhenFull() {
+        let s = GCodeStreamer()
+        // Each line ~60 bytes + newline → only two fit in 127
+        let long = String(repeating: "A", count: 60)
+        s.load(lines: [long, long, long])
+        s.start()
+        XCTAssertNotNil(s.nextLineToSend())
+        XCTAssertNotNil(s.nextLineToSend())
+        XCTAssertNil(s.nextLineToSend()) // buffer full
+        XCTAssertGreaterThan(s.bytesInFlight, 0)
+        s.handleResponse("ok")
+        XCTAssertNotNil(s.nextLineToSend())
     }
 
     func testErrorFaultsStreamer() {

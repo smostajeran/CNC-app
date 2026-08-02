@@ -1,11 +1,12 @@
 import Foundation
 
-/// Drives a `GCodeStreamer` against a `GRBLClient`.
+/// Drives a `GCodeStreamer` against a `GRBLClient` using the character window.
 public final class JobRunner: @unchecked Sendable {
     public let streamer = GCodeStreamer()
     private weak var client: GRBLClient?
     private var pumpTimer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "cnc.job.runner")
+    private var lastProgressEmit = Date.distantPast
 
     public var onProgress: ((Double, StreamerState) -> Void)?
     public var onState: ((StreamerState) -> Void)?
@@ -17,7 +18,7 @@ public final class JobRunner: @unchecked Sendable {
         client.onLine = { [weak self] line in
             self?.queue.async {
                 self?.streamer.handleResponse(line)
-                self?.emit()
+                self?.emit(force: true)
                 self?.pump()
             }
         }
@@ -25,12 +26,12 @@ public final class JobRunner: @unchecked Sendable {
 
     public func loadGCode(_ text: String) {
         streamer.load(text: text)
-        emit()
+        emit(force: true)
     }
 
     public func start() {
         streamer.start()
-        emit()
+        emit(force: true)
         startPump()
         pump()
     }
@@ -38,13 +39,13 @@ public final class JobRunner: @unchecked Sendable {
     public func pause() {
         streamer.pause()
         try? client?.feedHold()
-        emit()
+        emit(force: true)
     }
 
     public func resume() {
         streamer.resume()
         try? client?.cycleStart()
-        emit()
+        emit(force: true)
         pump()
     }
 
@@ -52,7 +53,7 @@ public final class JobRunner: @unchecked Sendable {
         streamer.cancel()
         try? client?.halt()
         stopPump()
-        emit()
+        emit(force: true)
     }
 
     private func startPump() {
@@ -73,17 +74,16 @@ public final class JobRunner: @unchecked Sendable {
 
     private func pump() {
         guard let client else { return }
+        // Fill GRBL RX window with as many lines as fit.
         while let line = streamer.nextLineToSend() {
             do {
                 try client.sendLine(line)
             } catch {
                 streamer.handleResponse("error:send_failed")
                 stopPump()
-                emit()
+                emit(force: true)
                 return
             }
-            // Wait for ok before next (streamer enforces awaitingOk)
-            break
         }
         if streamer.state == .completed || streamer.state == .cancelled {
             stopPump()
@@ -91,10 +91,15 @@ public final class JobRunner: @unchecked Sendable {
         if case .fault = streamer.state {
             stopPump()
         }
-        emit()
+        emit(force: false)
     }
 
-    private func emit() {
+    private func emit(force: Bool) {
+        let now = Date()
+        if !force && now.timeIntervalSince(lastProgressEmit) < 0.08 {
+            return
+        }
+        lastProgressEmit = now
         onProgress?(streamer.progress, streamer.state)
         onState?(streamer.state)
     }

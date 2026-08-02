@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import AppKit
 import CNCCore
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -15,13 +16,27 @@ final class AppModel: ObservableObject {
     @Published var jogStep: Double = 10
     @Published var jobText: String = ""
     @Published var jobName: String = "Untitled"
+    @Published var jobURL: URL?
     @Published var previewJob: PlotJob?
     @Published var streamProgress: Double = 0
     @Published var streamState: StreamerState = .idle
     @Published var lastError: String?
+    @Published var recentJobs: [String] = []
+    @Published var watchJobFile: Bool = false
+    @Published var textInput: String = "Hello TA-4"
+    @Published var textHeightMm: Double = 12
+    @Published var penChangeMessage: String?
 
     private let client = GRBLClient()
     private let runner = JobRunner()
+    private var previewTask: Task<Void, Never>?
+    private var statusTimer: Timer?
+    private var fileWatchSource: DispatchSourceFileSystemObject?
+    private var fileWatchFD: Int32 = -1
+
+    private static let recentKey = "ta4host.recentJobs"
+    private static let portKey = "ta4host.lastPort"
+    private static let baudKey = "ta4host.lastBaud"
 
     var isConnected: Bool {
         if case .connected = connectionState { return true }
@@ -29,12 +44,23 @@ final class AppModel: ObservableObject {
     }
 
     init() {
+        if let saved = MachineProfile.loadFromDefaults() {
+            machine = saved
+        }
+        recentJobs = UserDefaults.standard.stringArray(forKey: Self.recentKey) ?? []
+        selectedPort = UserDefaults.standard.string(forKey: Self.portKey)
+        let baud = UserDefaults.standard.integer(forKey: Self.baudKey)
+        if baud > 0 { baudRate = baud }
+
         runner.attach(client: client)
         client.onConsole = { [weak self] line in
             Task { @MainActor in
                 self?.console.append(line)
                 if let self, self.console.count > 400 {
                     self.console.removeFirst(self.console.count - 400)
+                }
+                if line.contains("PEN CHANGE") || line.hasPrefix("M0") {
+                    self?.penChangeMessage = "Pen change pause — swap pen, then Resume"
                 }
             }
         }
@@ -46,22 +72,31 @@ final class AppModel: ObservableObject {
         client.onConnectionChange = { [weak self] state in
             Task { @MainActor in
                 self?.connectionState = state
+                self?.updateStatusPolling()
             }
         }
         runner.onProgress = { [weak self] progress, state in
             Task { @MainActor in
                 self?.streamProgress = progress
                 self?.streamState = state
+                if state == .running {
+                    self?.penChangeMessage = nil
+                }
             }
         }
         refreshPorts()
     }
 
+    func persistMachine() {
+        machine.saveToDefaults()
+    }
+
     func refreshPorts() {
         ports = SerialPortEnumerator.listPorts()
-        if selectedPort == nil {
-            selectedPort = ports.first?.path
+        if let selectedPort, ports.contains(where: { $0.path == selectedPort }) {
+            return
         }
+        selectedPort = ports.first?.path
     }
 
     func connect() {
@@ -71,6 +106,8 @@ final class AppModel: ObservableObject {
         }
         lastError = nil
         connectionState = .connecting
+        UserDefaults.standard.set(selectedPort, forKey: Self.portKey)
+        UserDefaults.standard.set(baudRate, forKey: Self.baudKey)
         let path = selectedPort
         let baud = baudRate
         let client = self.client
@@ -90,12 +127,26 @@ final class AppModel: ObservableObject {
     func disconnect() {
         client.disconnect()
         connectionState = .disconnected
+        updateStatusPolling()
     }
 
     func updateJobText(_ text: String) {
         jobText = text
-        previewJob = Self.previewFromGCode(text)
-        runner.loadGCode(text)
+        schedulePreviewRebuild()
+        // Streamer loads on Start / file open — not every keystroke.
+    }
+
+    private func schedulePreviewRebuild() {
+        previewTask?.cancel()
+        let text = jobText
+        previewTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            let job = Self.previewFromGCode(text).simplified()
+            await MainActor.run {
+                self?.previewJob = job
+            }
+        }
     }
 
     func sendConsole(_ line: String) {
@@ -114,6 +165,23 @@ final class AppModel: ObservableObject {
     }
     func requestStatus() { try? client.requestStatus() }
 
+    func setWorkZero() {
+        do {
+            try client.setWorkZero()
+            console.append("--- Work zero set (G10 L20 P1 X0 Y0) ---")
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func goToOrigin() {
+        do {
+            try client.goToOrigin(machine: machine)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     func probe() {
         guard isConnected else {
             lastError = "Connect first"
@@ -128,6 +196,7 @@ final class AppModel: ObservableObject {
                     if !result.buildInfo.isEmpty {
                         self.machine.buildInfo = result.buildInfo
                     }
+                    self.persistMachine()
                     self.console.append("--- Probe complete ---")
                     if !result.buildInfo.isEmpty { self.console.append(result.buildInfo) }
                     if !result.settingsText.isEmpty { self.console.append(result.settingsText) }
@@ -151,19 +220,86 @@ final class AppModel: ObservableObject {
 
     func loadJob(url: URL) {
         do {
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             let data = try Data(contentsOf: url)
             guard let text = String(data: data, encoding: .utf8) else {
                 lastError = "Could not read file as UTF-8"
                 return
             }
             jobName = url.lastPathComponent
-            if url.pathExtension.lowercased() == "svg" {
+            jobURL = url
+            rememberRecent(url)
+            applyJobText(text, isSVG: url.pathExtension.lowercased() == "svg")
+            startFileWatchIfNeeded()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func loadJob(text: String, name: String, isSVG: Bool) {
+        jobName = name
+        jobURL = nil
+        stopFileWatch()
+        applyJobText(text, isSVG: isSVG)
+    }
+
+    func pasteFromClipboard() {
+        let pb = NSPasteboard.general
+        if let types = pb.types, types.contains(.init("public.svg-image")) || types.contains(.html),
+           let str = pb.string(forType: .string) ?? pb.string(forType: .html),
+           str.contains("<svg") {
+            loadJob(text: str, name: "Clipboard.svg", isSVG: true)
+            return
+        }
+        if let str = pb.string(forType: .string) {
+            let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.contains("<svg") {
+                loadJob(text: trimmed, name: "Clipboard.svg", isSVG: true)
+            } else {
+                loadJob(text: trimmed, name: "Clipboard.gcode", isSVG: false)
+            }
+        }
+    }
+
+    func exportInkscapeTemplate() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "TA4-workspace.svg"
+        panel.allowedContentTypes = [.svg]
+        if panel.runModal() == .OK, let url = panel.url {
+            let svg = InkscapeTemplate.workspaceSVG(profile: machine)
+            do {
+                try svg.write(to: url, atomically: true, encoding: .utf8)
+                console.append("--- Exported Inkscape template: \(url.lastPathComponent) ---")
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func generateTextJob() {
+        let gcode = SingleLineText.gcode(
+            text: textInput,
+            profile: machine,
+            heightMm: textHeightMm,
+            origin: PlotPoint(x: 10, y: machine.travelY * 0.5)
+        )
+        loadJob(text: gcode, name: "Text.gcode", isSVG: false)
+    }
+
+    private func applyJobText(_ text: String, isSVG: Bool) {
+        do {
+            if isSVG {
                 let job = try SVGToGCode.plotJob(from: text, profile: machine, fitToWorkspace: true)
-                previewJob = job
+                previewJob = job.simplified()
                 jobText = SVGToGCode.gcode(from: job, profile: machine)
             } else {
-                jobText = text
-                previewJob = Self.previewFromGCode(text)
+                let normalized = GCodeNormalizer.normalizePenCommands(text, profile: machine)
+                jobText = normalized.text
+                if normalized.substitutions > 0 {
+                    console.append("--- Normalized \(normalized.substitutions) pen M3/M5/SM03 → Z moves ---")
+                }
+                previewJob = Self.previewFromGCode(jobText).simplified()
             }
             runner.loadGCode(jobText)
             streamProgress = 0
@@ -178,13 +314,81 @@ final class AppModel: ObservableObject {
             lastError = "Connect first"
             return
         }
+        penChangeMessage = nil
         runner.loadGCode(jobText)
         runner.start()
     }
 
     func pauseJob() { runner.pause() }
-    func resumeJob() { runner.resume() }
-    func cancelJob() { runner.cancel() }
+    func resumeJob() {
+        penChangeMessage = nil
+        runner.resume()
+    }
+    func cancelJob() {
+        penChangeMessage = nil
+        runner.cancel()
+    }
+
+    func setWatchJobFile(_ enabled: Bool) {
+        watchJobFile = enabled
+        if watchJobFile {
+            startFileWatchIfNeeded()
+        } else {
+            stopFileWatch()
+        }
+    }
+
+    private func rememberRecent(_ url: URL) {
+        var list = recentJobs.filter { $0 != url.path }
+        list.insert(url.path, at: 0)
+        if list.count > 8 { list = Array(list.prefix(8)) }
+        recentJobs = list
+        UserDefaults.standard.set(list, forKey: Self.recentKey)
+    }
+
+    private func updateStatusPolling() {
+        statusTimer?.invalidate()
+        statusTimer = nil
+        guard isConnected else { return }
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isConnected else { return }
+                if self.streamState == .running || self.streamState == .paused {
+                    self.requestStatus()
+                }
+            }
+        }
+    }
+
+    private func startFileWatchIfNeeded() {
+        stopFileWatch()
+        guard watchJobFile, let url = jobURL else { return }
+        let path = url.path
+        let fd = open(path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        fileWatchFD = fd
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self, let url = self.jobURL else { return }
+            self.loadJob(url: url)
+            self.console.append("--- Reloaded \(url.lastPathComponent) after save ---")
+        }
+        source.setCancelHandler {
+            close(fd)
+        }
+        fileWatchSource = source
+        source.resume()
+    }
+
+    private func stopFileWatch() {
+        fileWatchSource?.cancel()
+        fileWatchSource = nil
+        fileWatchFD = -1
+    }
 
     private static func previewFromGCode(_ text: String) -> PlotJob {
         var commands: [PlotCommand] = []
@@ -193,13 +397,17 @@ final class AppModel: ObservableObject {
         var penDown = false
         for raw in GCodeStreamer.normalize(text) {
             let upper = raw.uppercased()
+            if upper == "M0" || upper.hasPrefix("M0 ") {
+                commands.append(.penChange("pause"))
+                continue
+            }
             if upper.contains("Z") {
-                if let z = value(in: upper, key: "Z") {
+                if let z = scanValue(upper, key: "Z") {
                     penDown = z <= 0.5
                 }
             }
-            let nx = value(in: upper, key: "X") ?? x
-            let ny = value(in: upper, key: "Y") ?? y
+            let nx = scanValue(upper, key: "X") ?? x
+            let ny = scanValue(upper, key: "Y") ?? y
             if nx != x || ny != y {
                 let p = PlotPoint(x: nx, y: ny)
                 commands.append(penDown ? .line(p) : .move(p))
@@ -209,11 +417,19 @@ final class AppModel: ObservableObject {
         return PlotJob(commands: commands)
     }
 
-    private static func value(in line: String, key: String) -> Double? {
-        guard let regex = try? NSRegularExpression(pattern: #"\#(key)([-+0-9.]+)"#) else { return nil }
-        let range = NSRange(line.startIndex..., in: line)
-        guard let match = regex.firstMatch(in: line, options: [], range: range),
-              let r = Range(match.range(at: 1), in: line) else { return nil }
-        return Double(line[r])
+    private static func scanValue(_ line: String, key: String) -> Double? {
+        guard let idx = line.firstIndex(of: Character(key)) else { return nil }
+        var i = line.index(after: idx)
+        var num = ""
+        while i < line.endIndex {
+            let ch = line[i]
+            if ch.isNumber || ch == "-" || ch == "+" || ch == "." || ch == "e" || ch == "E" {
+                num.append(ch)
+                i = line.index(after: i)
+            } else {
+                break
+            }
+        }
+        return Double(num)
     }
 }

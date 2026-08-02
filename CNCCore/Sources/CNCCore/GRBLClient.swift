@@ -117,6 +117,17 @@ public final class GRBLClient: @unchecked Sendable {
         try sendLine("G90 G1 Z\(fmt(machine.penDownZ)) F\(fmt(machine.drawFeed))")
     }
 
+    /// Set current XY as work coordinate zero (G54 via G10 L20).
+    public func setWorkZero() throws {
+        try sendLine("G10 L20 P1 X0 Y0")
+    }
+
+    /// Pen up, then rapid to work origin.
+    public func goToOrigin(machine: MachineProfile) throws {
+        try penUp(machine)
+        try sendLine("G90 G0 X0 Y0")
+    }
+
     public func probe() throws -> GRBLProbeResult {
         stopPolling()
         defer { startPolling() }

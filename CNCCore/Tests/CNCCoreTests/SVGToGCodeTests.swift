@@ -30,6 +30,31 @@ final class SVGToGCodeTests: XCTestCase {
         XCTAssertTrue(cmds.contains(.line(PlotPoint(x: 0, y: 0))))
     }
 
+    func testCubicCurveProducesSegments() {
+        let cmds = SVGToGCode.parsePathD("M0 0 C10 0 10 10 0 10")
+        XCTAssertEqual(cmds.first, .move(PlotPoint(x: 0, y: 0)))
+        XCTAssertGreaterThan(cmds.count, 8)
+        if case .line(let last) = cmds.last {
+            XCTAssertEqual(last.x, 0, accuracy: 0.01)
+            XCTAssertEqual(last.y, 10, accuracy: 0.01)
+        } else {
+            XCTFail("expected final line")
+        }
+    }
+
+    func testCircleElement() throws {
+        let svg = #"<svg><circle cx="50" cy="50" r="20"/></svg>"#
+        let job = try SVGToGCode.plotJob(from: svg, profile: .ta4, fitToWorkspace: false)
+        XCTAssertGreaterThan(job.commands.count, 10)
+    }
+
+    func testInkscapeTemplateHasWorkspace() {
+        let svg = InkscapeTemplate.workspaceSVG(profile: .ta4)
+        XCTAssertTrue(svg.contains("390"))
+        XCTAssertTrue(svg.contains("200"))
+        XCTAssertTrue(svg.contains("inkscape:label"))
+    }
+
     func testStatusParse() {
         let status = GRBLStatus.parse("<Idle|MPos:1.000,2.000,3.000|FS:0,0>")
         XCTAssertEqual(status?.state, "Idle")
@@ -55,5 +80,42 @@ final class SVGToGCodeTests: XCTestCase {
         XCTAssertEqual(profile.travelX, 390)
         XCTAssertEqual(profile.travelY, 200)
         XCTAssertEqual(profile.stepsPerMmX, 80)
+    }
+
+    func testSingleLineText() {
+        let job = SingleLineText.plotJob(text: "Hi", heightMm: 10, origin: PlotPoint(x: 0, y: 0))
+        XCTAssertFalse(job.commands.isEmpty)
+        let gcode = SingleLineText.gcode(text: "AB", profile: .ta4)
+        XCTAssertTrue(gcode.contains("G1"))
+    }
+
+    func testTranslateTransform() throws {
+        let svg = #"<svg viewBox="0 0 100 100"><path transform="translate(10 20)" d="M0 0 L10 0"/></svg>"#
+        let job = try SVGToGCode.plotJob(from: svg, profile: .ta4, fitToWorkspace: false)
+        XCTAssertTrue(job.commands.contains(.move(PlotPoint(x: 10, y: 20))))
+        XCTAssertTrue(job.commands.contains(.line(PlotPoint(x: 20, y: 20))))
+    }
+
+    func testViewBoxOriginShift() throws {
+        let svg = #"<svg viewBox="50 50 100 100"><path d="M50 50 L60 50"/></svg>"#
+        let job = try SVGToGCode.plotJob(from: svg, profile: .ta4, fitToWorkspace: false)
+        XCTAssertTrue(job.commands.contains(.move(PlotPoint(x: 0, y: 0))))
+        XCTAssertTrue(job.commands.contains(.line(PlotPoint(x: 10, y: 0))))
+    }
+
+    func testMachineProfileDefaultsRoundTrip() {
+        let defaults = UserDefaults(suiteName: "ta4host.tests.\(UUID().uuidString)")!
+        defer { defaults.removePersistentDomain(forName: defaults.suiteName!) }
+
+        var profile = MachineProfile.ta4
+        profile.invertX = true
+        profile.penUpZ = 6.5
+        profile.drawFeed = 1200
+        profile.saveToDefaults(defaults)
+
+        let loaded = MachineProfile.loadFromDefaults(defaults)
+        XCTAssertEqual(loaded?.invertX, true)
+        XCTAssertEqual(loaded?.penUpZ, 6.5)
+        XCTAssertEqual(loaded?.drawFeed, 1200)
     }
 }

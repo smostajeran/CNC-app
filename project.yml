@@ -19,6 +19,12 @@ targets:
       - path: TA4Host
         excludes:
           - "*.entitlements"
+          - Info.plist
+    info:
+      path: TA4Host/Info.plist
+      properties:
+        CFBundleDisplayName: TA4Host
+        LSApplicationCategoryType: public.app-category.utilities
     dependencies:
       - package: CNCCore
         product: CNCCore
@@ -26,9 +32,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cncapp.TA4Host
         PRODUCT_NAME: TA4Host
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: TA4Host
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         CODE_SIGN_ENTITLEMENTS: TA4Host/TA4Host.entitlements
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_IDENTITY: "-"

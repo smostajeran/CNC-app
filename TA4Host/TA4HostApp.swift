@@ -11,7 +11,12 @@ struct TA4HostApp: App {
                 .frame(minWidth: 960, minHeight: 640)
         }
         .commands {
-            CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .pasteboard) {
+                Button("Paste Job") { model.pasteFromClipboard() }
+                    .keyboardShortcut("v", modifiers: [.command, .shift])
+                Button("Export Inkscape Template…") { model.exportInkscapeTemplate() }
+            }
         }
+        .handlesExternalEvents(matching: ["ta4host"])
     }
 }
