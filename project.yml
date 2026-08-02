@@ -32,6 +32,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cncapp.TA4Host
         PRODUCT_NAME: TA4Host
+        GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_ENTITLEMENTS: TA4Host/TA4Host.entitlements
-        ENABLE_HARDENED_RUNTIME: YES
+        # Local Debug builds use ad-hoc signing; hardened runtime breaks that.
+        ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGNING_REQUIRED: NO
