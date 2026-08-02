@@ -45,6 +45,18 @@ xcodebuild -scheme TA4Host -configuration Debug build
 
 Foreign G-code from Candle / plotter Inkscape extensions that uses `M3`/`M5`/`SM03` is rewritten to motor-Z moves on load.
 
+## Handwriting pressure → Z
+
+The TA-4 has no force sensor — pressure is approximated by **motor Z depth** after paper contact.
+
+1. Sidebar **Ink → Show ink canvas**.
+2. Draw with a stylus (recommended: Wacom / Sidecar Apple Pencil). Pressure modulates line weight in the canvas and `Z` in G-code.
+3. Without a stylus, trackpad/mouse uses a **speed proxy** (faster strokes → lighter pressure).
+4. Calibrate **Light Z** / **Hard Z** in Settings; use **Test pressure sweep** on the machine.
+5. Soft markers and fountain pens respond better than hard ballpoints; a slightly springy pen holder helps.
+
+SVG paths with varying `stroke-width` also map to pressure when imported. Save ink as `.ta4ink` or export SVG for Inkscape.
+
 ## Probe / stream (USB)
 
 ```bash

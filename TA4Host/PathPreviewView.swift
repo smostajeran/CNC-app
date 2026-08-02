@@ -42,25 +42,31 @@ struct PathPreviewView: View {
             }
 
             let drawable = job.simplified()
-            var path = Path()
-            var started = false
+            var lastPoint: CGPoint?
             for cmd in drawable.commands {
                 switch cmd {
                 case .move(let p):
-                    path.move(to: map(p))
-                    started = true
+                    lastPoint = map(p)
                 case .line(let p):
-                    if !started {
-                        path.move(to: map(p))
-                        started = true
-                    } else {
-                        path.addLine(to: map(p))
+                    let next = map(p)
+                    if let from = lastPoint {
+                        var seg = Path()
+                        seg.move(to: from)
+                        seg.addLine(to: next)
+                        let pressure = p.pressure ?? 0.5
+                        let width = 0.8 + pressure * 2.2
+                        let opacity = 0.4 + pressure * 0.6
+                        context.stroke(
+                            seg,
+                            with: .color(.accentColor.opacity(opacity)),
+                            lineWidth: width
+                        )
                     }
+                    lastPoint = next
                 case .penChange:
-                    started = false
+                    lastPoint = nil
                 }
             }
-            context.stroke(path, with: .color(.accentColor), lineWidth: 1.5)
         }
         .accessibilityLabel("Path preview")
     }

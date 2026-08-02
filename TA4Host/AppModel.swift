@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
     @Published var textInput: String = "Hello TA-4"
     @Published var textHeightMm: Double = 12
     @Published var penChangeMessage: String?
+    @Published var inkDocument = InkDocument()
+    @Published var showInkCanvas: Bool = false
 
     private let client = GRBLClient()
     private let runner = JobRunner()
@@ -88,6 +90,7 @@ final class AppModel: ObservableObject {
     }
 
     func persistMachine() {
+        machine.clampPressureRange()
         machine.saveToDefaults()
     }
 
@@ -222,15 +225,28 @@ final class AppModel: ObservableObject {
         do {
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let ext = url.pathExtension.lowercased()
+            if ext == "ta4ink" || (ext == "json" && url.lastPathComponent.contains("ink")) {
+                loadInkDocument(url: url)
+                return
+            }
             let data = try Data(contentsOf: url)
             guard let text = String(data: data, encoding: .utf8) else {
                 lastError = "Could not read file as UTF-8"
                 return
             }
+            // Heuristic: JSON ink documents
+            if text.contains("\"strokes\"") && text.contains("\"pressure\"") {
+                inkDocument = try InkDocument.load(from: data)
+                showInkCanvas = true
+                applyInkToJob()
+                rememberRecent(url)
+                return
+            }
             jobName = url.lastPathComponent
             jobURL = url
             rememberRecent(url)
-            applyJobText(text, isSVG: url.pathExtension.lowercased() == "svg")
+            applyJobText(text, isSVG: ext == "svg")
             startFileWatchIfNeeded()
         } catch {
             lastError = error.localizedDescription
@@ -285,6 +301,107 @@ final class AppModel: ObservableObject {
             origin: PlotPoint(x: 10, y: machine.travelY * 0.5)
         )
         loadJob(text: gcode, name: "Text.gcode", isSVG: false)
+    }
+
+    func applyInkToJob() {
+        inkDocument.travelX = machine.travelX
+        inkDocument.travelY = machine.travelY
+        let job = inkDocument.plotJob()
+        guard !job.commands.isEmpty else {
+            lastError = "Draw at least one ink stroke first"
+            return
+        }
+        previewJob = job.simplified()
+        jobText = SVGToGCode.gcode(from: job, profile: machine)
+        jobName = "Ink.gcode"
+        jobURL = nil
+        runner.loadGCode(jobText)
+        streamProgress = 0
+        streamState = .idle
+        console.append("--- Ink job: \(inkDocument.strokes.count) stroke(s), pressure→Z ---")
+    }
+
+    func clearInk() {
+        inkDocument = InkDocument(travelX: machine.travelX, travelY: machine.travelY)
+    }
+
+    func saveInkDocument() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "handwriting.ta4ink"
+        if let ut = UTType(filenameExtension: "ta4ink") {
+            panel.allowedContentTypes = [ut, .json]
+        } else {
+            panel.allowedContentTypes = [.json]
+        }
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try inkDocument.jsonData().write(to: url)
+                console.append("--- Saved ink: \(url.lastPathComponent) ---")
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func exportInkSVG() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "handwriting.svg"
+        panel.allowedContentTypes = [.svg]
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try inkDocument.exportSVG().write(to: url, atomically: true, encoding: .utf8)
+                console.append("--- Exported ink SVG: \(url.lastPathComponent) ---")
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func loadInkDocument(url: URL) {
+        do {
+            let data = try Data(contentsOf: url)
+            inkDocument = try InkDocument.load(from: data)
+            showInkCanvas = true
+            applyInkToJob()
+            rememberRecent(url)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Jog a short XY segment while stepping Z across the pressure range for calibration.
+    func testPressureSweep() {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        machine.clampPressureRange()
+        persistMachine()
+        let light = machine.pressureMinZ
+        let hard = machine.pressureMaxZ
+        let steps = 5
+        Task.detached(priority: .userInitiated) { [client, machine] in
+            do {
+                try client.penUp(machine)
+                try client.sendLine("G90 G0 X10 Y10")
+                for i in 0...steps {
+                    let t = Double(i) / Double(steps)
+                    let z = light + (hard - light) * t
+                    try client.sendLine(String(format: "G1 Z%.3f F%.3f", z, machine.drawFeed))
+                    try client.sendLine(String(format: "G1 X%.3f Y10 F%.3f", 10 + Double(i) * 8, machine.drawFeed))
+                    Thread.sleep(forTimeInterval: 0.15)
+                }
+                try client.penUp(machine)
+                await MainActor.run {
+                    self.console.append(String(
+                        format: "--- Pressure sweep Z %.2f → %.2f complete ---",
+                        light, hard
+                    ))
+                }
+            } catch {
+                await MainActor.run { self.lastError = error.localizedDescription }
+            }
+        }
     }
 
     private func applyJobText(_ text: String, isSVG: Bool) {

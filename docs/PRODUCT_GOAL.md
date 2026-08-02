@@ -40,6 +40,16 @@ Sourced from Bachin wiki tips, Apple Support Communities, and GRBL issues:
 - **Other CAM/senders:** normalize servo pen G-code from Candle / Inkscape extensions
 - **CLI:** `scripts/probe-grbl.py`, `scripts/send-gcode.py`
 
+## v1.2 — Pressure-aware handwriting
+
+| Need | Status |
+|------|--------|
+| Stylus / tablet pressure → motor Z | Shipped (ink canvas) |
+| Trackpad speed → synthetic pressure | Shipped |
+| SVG `stroke-width` → pressure → Z | Shipped |
+| Light/hard Z calibration + sweep test | Shipped |
+| `.ta4ink` save/load + SVG export | Shipped |
+
 ## Deferred
 
 Handwriting font libraries / Bachin Write Android sync, Excel/tables, image raster/trace, DXF, full multi-pen gallery UI, laser mode, Windows host, iOS (needs Wi‑Fi/BLE bridge), App Store polish, Inkscape extension that owns the serial port.

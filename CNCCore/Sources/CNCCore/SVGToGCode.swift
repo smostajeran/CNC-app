@@ -48,31 +48,45 @@ public enum SVGToGCode {
 
     public static func gcode(from job: PlotJob, profile: MachineProfile) -> String {
         var lines: [String] = [
-            "; TA4Host SVG job",
+            "; TA4Host SVG / ink job",
             "G21",
             "G90",
             "G0 Z\(fmt(profile.penUpZ))",
         ]
 
         var penDown = false
+        var lastPressure: Double?
         for cmd in job.commands {
             switch cmd {
             case .move(let p):
                 if penDown {
                     lines.append("G0 Z\(fmt(profile.penUpZ))")
                     penDown = false
+                    lastPressure = nil
                 }
                 lines.append("G0 X\(fmt(p.x)) Y\(fmt(p.y))")
             case .line(let p):
+                let pressure = p.pressure
                 if !penDown {
-                    lines.append("G1 Z\(fmt(profile.penDownZ)) F\(fmt(profile.drawFeed))")
+                    let z = profile.z(forPressure: pressure ?? 0.5)
+                    lines.append("G1 Z\(fmt(z)) F\(fmt(profile.drawFeed))")
                     penDown = true
+                    lastPressure = pressure ?? 0.5
+                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) F\(fmt(profile.drawFeed))")
+                } else if let pressure,
+                          lastPressure == nil
+                            || abs(pressure - (lastPressure ?? pressure)) >= MachineProfile.pressureEpsilon {
+                    let z = profile.z(forPressure: pressure)
+                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) Z\(fmt(z)) F\(fmt(profile.drawFeed))")
+                    lastPressure = pressure
+                } else {
+                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) F\(fmt(profile.drawFeed))")
                 }
-                lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) F\(fmt(profile.drawFeed))")
             case .penChange(let label):
                 if penDown {
                     lines.append("G0 Z\(fmt(profile.penUpZ))")
                     penDown = false
+                    lastPressure = nil
                 }
                 lines.append("; >>> PEN CHANGE: \(label) — click Resume when ready")
                 lines.append("M0")
@@ -108,7 +122,15 @@ public enum SVGToGCode {
                     let body = String(svg[bodyR])
                     let color = strokeColor(in: attrs) ?? strokeColor(in: body)
                     let groupXf = parseTransform(attrs) ?? .identity
-                    let cmds = applyAffine(extractPrimitiveCommands(from: body), groupXf)
+                    var cmds = applyAffine(extractPrimitiveCommands(from: body), groupXf)
+                    let hasPressure = cmds.contains {
+                        if case .line(let p) = $0, p.pressure != nil { return true }
+                        return false
+                    }
+                    if !hasPressure, let gw = strokeWidth(in: attrs) ?? strokeWidth(in: body) {
+                        // Single inherited width → mid pressure (document may still normalize elsewhere).
+                        cmds = applyPressure(cmds, pressureFromStrokeWidths([gw], width: gw))
+                    }
                     if !cmds.isEmpty {
                         layers.append((color, cmds))
                     }
@@ -161,7 +183,11 @@ public enum SVGToGCode {
             guard let d = attrString(attrs, "d") else { continue }
             let color = strokeColor(in: attrs) ?? "#000000"
             let xf = parseTransform(attrs) ?? .identity
-            let cmds = applyAffine(parsePathD(d), xf)
+            var cmds = applyAffine(parsePathD(d), xf)
+            if let w = strokeWidth(in: attrs) {
+                cmds = applyPressure(cmds, 0.5) // refined after full pass if needed
+                _ = w
+            }
             if !cmds.isEmpty { result.append((color, cmds)) }
         }
         let colors = Set(result.map(\.0))
@@ -169,48 +195,61 @@ public enum SVGToGCode {
     }
 
     private static func extractPrimitiveCommands(from svg: String) -> [PlotCommand] {
+        let elements = collectDrawableElements(from: svg)
+        let widths = elements.compactMap { strokeWidth(in: $0.tag) }
         var commands: [PlotCommand] = []
+        for item in elements {
+            let xf = parseTransform(item.tag) ?? .identity
+            let pressure = strokeWidth(in: item.tag).flatMap { pressureFromStrokeWidths(widths, width: $0) }
+            let cmds = applyPressure(applyAffine(item.commands, xf), pressure)
+            commands.append(contentsOf: cmds)
+        }
+        return commands
+    }
 
+    private struct DrawableElement {
+        var tag: String
+        var commands: [PlotCommand]
+    }
+
+    private static func collectDrawableElements(from svg: String) -> [DrawableElement] {
+        var elements: [DrawableElement] = []
         for element in matches(svg, pattern: #"<path\b[^>]*>"#) {
             guard let d = attrString(element, "d") else { continue }
-            let xf = parseTransform(element) ?? .identity
-            commands.append(contentsOf: applyAffine(parsePathD(d), xf))
+            let cmds = parsePathD(d)
+            if !cmds.isEmpty { elements.append(DrawableElement(tag: element, commands: cmds)) }
         }
         for element in matches(svg, pattern: #"<polyline\b[^>]*>"#) {
             guard let pts = attrString(element, "points") else { continue }
-            let xf = parseTransform(element) ?? .identity
-            commands.append(contentsOf: applyAffine(polylineCommands(pts, closed: false), xf))
+            let cmds = polylineCommands(pts, closed: false)
+            if !cmds.isEmpty { elements.append(DrawableElement(tag: element, commands: cmds)) }
         }
         for element in matches(svg, pattern: #"<polygon\b[^>]*>"#) {
             guard let pts = attrString(element, "points") else { continue }
-            let xf = parseTransform(element) ?? .identity
-            commands.append(contentsOf: applyAffine(polylineCommands(pts, closed: true), xf))
+            let cmds = polylineCommands(pts, closed: true)
+            if !cmds.isEmpty { elements.append(DrawableElement(tag: element, commands: cmds)) }
         }
         for element in matches(svg, pattern: #"<line\b[^>]*>"#) {
-            if let lineCmds = parseLineElement(element) {
-                let xf = parseTransform(element) ?? .identity
-                commands.append(contentsOf: applyAffine(lineCmds, xf))
+            if let cmds = parseLineElement(element) {
+                elements.append(DrawableElement(tag: element, commands: cmds))
             }
         }
         for element in matches(svg, pattern: #"<rect\b[^>]*>"#) {
-            if let rectCmds = parseRectElement(element) {
-                let xf = parseTransform(element) ?? .identity
-                commands.append(contentsOf: applyAffine(rectCmds, xf))
+            if let cmds = parseRectElement(element) {
+                elements.append(DrawableElement(tag: element, commands: cmds))
             }
         }
         for element in matches(svg, pattern: #"<circle\b[^>]*>"#) {
-            if let circleCmds = parseCircleElement(element) {
-                let xf = parseTransform(element) ?? .identity
-                commands.append(contentsOf: applyAffine(circleCmds, xf))
+            if let cmds = parseCircleElement(element) {
+                elements.append(DrawableElement(tag: element, commands: cmds))
             }
         }
         for element in matches(svg, pattern: #"<ellipse\b[^>]*>"#) {
-            if let ellipseCmds = parseEllipseElement(element) {
-                let xf = parseTransform(element) ?? .identity
-                commands.append(contentsOf: applyAffine(ellipseCmds, xf))
+            if let cmds = parseEllipseElement(element) {
+                elements.append(DrawableElement(tag: element, commands: cmds))
             }
         }
-        return commands
+        return elements
     }
 
     // MARK: - viewBox / transform
@@ -236,7 +275,7 @@ public enum SVGToGCode {
         }
 
         func apply(_ p: PlotPoint) -> PlotPoint {
-            PlotPoint(x: a * p.x + c * p.y + e, y: b * p.x + d * p.y + f)
+            PlotPoint(x: a * p.x + c * p.y + e, y: b * p.x + d * p.y + f, pressure: p.pressure)
         }
 
         func concatenating(_ o: Affine2D) -> Affine2D {
@@ -317,6 +356,17 @@ public enum SVGToGCode {
         }
     }
 
+    static func applyPressure(_ commands: [PlotCommand], _ pressure: Double?) -> [PlotCommand] {
+        guard let pressure else { return commands }
+        return commands.map { cmd in
+            switch cmd {
+            case .move(let p): return .move(p)
+            case .line(let p): return .line(p.with(pressure: pressure))
+            case .penChange(let label): return .penChange(label)
+            }
+        }
+    }
+
     private static func strokeColor(in text: String) -> String? {
         if let s = attrString(text, "stroke"), s.lowercased() != "none" { return s }
         // style="stroke:#f00"
@@ -329,6 +379,29 @@ public enum SVGToGCode {
               let r = Range(match.range(at: 1), in: text) else { return nil }
         let value = String(text[r]).trimmingCharacters(in: .whitespaces)
         return value.lowercased() == "none" ? nil : value
+    }
+
+    /// Parse stroke-width from attribute or CSS style (user units / mm).
+    static func strokeWidth(in text: String) -> Double? {
+        if let w = attr(text, "stroke-width") { return w }
+        if let s = attrString(text, "stroke-width"), let w = Double(s) { return w }
+        guard let regex = try? NSRegularExpression(
+            pattern: #"stroke-width\s*:\s*([-+0-9.eE]+)"#,
+            options: [.caseInsensitive]
+        ) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              let r = Range(match.range(at: 1), in: text) else { return nil }
+        return Double(text[r])
+    }
+
+    /// Normalize stroke widths in the document to pressure `0...1`.
+    static func pressureFromStrokeWidths(_ widths: [Double], width: Double) -> Double? {
+        guard !widths.isEmpty else { return nil }
+        let lo = widths.min() ?? width
+        let hi = widths.max() ?? width
+        if abs(hi - lo) < 1e-9 { return 0.5 }
+        return min(max((width - lo) / (hi - lo), 0), 1)
     }
 
     private static func attrString(_ element: String, _ name: String) -> String? {
@@ -788,16 +861,24 @@ public enum SVGToGCode {
         let x = (p.x - b.minX) * scale + margin
         let yFromTop = (p.y - b.minY) * scale
         let y = profile.travelY - margin - yFromTop
-        return PlotPoint(x: x, y: y)
+        return PlotPoint(x: x, y: y, pressure: p.pressure)
     }
 
     static func clip(_ job: PlotJob, to profile: MachineProfile) -> PlotJob {
         let commands = job.commands.map { cmd -> PlotCommand in
             switch cmd {
             case .move(let p):
-                return .move(PlotPoint(x: clamp(p.x, 0, profile.travelX), y: clamp(p.y, 0, profile.travelY)))
+                return .move(PlotPoint(
+                    x: clamp(p.x, 0, profile.travelX),
+                    y: clamp(p.y, 0, profile.travelY),
+                    pressure: p.pressure
+                ))
             case .line(let p):
-                return .line(PlotPoint(x: clamp(p.x, 0, profile.travelX), y: clamp(p.y, 0, profile.travelY)))
+                return .line(PlotPoint(
+                    x: clamp(p.x, 0, profile.travelX),
+                    y: clamp(p.y, 0, profile.travelY),
+                    pressure: p.pressure
+                ))
             case .penChange(let label):
                 return .penChange(label)
             }

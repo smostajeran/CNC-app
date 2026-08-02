@@ -22,6 +22,9 @@ struct ContentView: View {
                 Section("Text") {
                     TextPane()
                 }
+                Section("Ink") {
+                    InkPane()
+                }
                 if !model.recentJobs.isEmpty {
                     Section("Recent") {
                         ForEach(model.recentJobs, id: \.self) { path in
@@ -184,6 +187,13 @@ struct SettingsPane: View {
             Toggle("Invert Z", isOn: $model.machine.invertZ)
             labeledField("Pen up Z", value: $model.machine.penUpZ)
             labeledField("Pen down Z", value: $model.machine.penDownZ)
+            labeledField("Light Z", value: $model.machine.pressureMinZ)
+            labeledField("Hard Z", value: $model.machine.pressureMaxZ)
+            Text("Pressure: light Z higher, hard Z lower (clamped)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Button("Test pressure sweep") { model.testPressureSweep() }
+                .disabled(!model.isConnected)
             labeledField("Jog feed", value: $model.machine.jogFeed)
             labeledField("Draw feed", value: $model.machine.drawFeed)
             Toggle("Watch job file (Inkscape reload)", isOn: Binding(
@@ -205,6 +215,31 @@ struct SettingsPane: View {
                 .frame(width: 80)
         }
         .font(.caption)
+    }
+}
+
+struct InkPane: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Show ink canvas", isOn: $model.showInkCanvas)
+            Text("Stylus pressure → Z. Trackpad uses speed proxy.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Use as job") { model.applyInkToJob() }
+                Button("Clear") { model.clearInk() }
+            }
+            HStack {
+                Button("Save .ta4ink…") { model.saveInkDocument() }
+                Button("Export SVG…") { model.exportInkSVG() }
+            }
+            Text("\(model.inkDocument.strokes.count) stroke(s)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -302,13 +337,24 @@ struct JobPane: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
 
-            PathPreviewView(job: model.previewJob, workspace: model.machine)
+            if model.showInkCanvas {
+                InkCanvasView(
+                    document: $model.inkDocument,
+                    workspace: model.machine,
+                    onStrokeEnd: { model.applyInkToJob() }
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: .textBackgroundColor))
                 .padding(8)
-                .onDrop(of: [.fileURL, .utf8PlainText], isTargeted: nil) { providers in
-                    handleDrop(providers)
-                }
+            } else {
+                PathPreviewView(job: model.previewJob, workspace: model.machine)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .padding(8)
+                    .onDrop(of: [.fileURL, .utf8PlainText], isTargeted: nil) { providers in
+                        handleDrop(providers)
+                    }
+            }
 
             TextEditor(text: Binding(
                 get: { model.jobText },
@@ -334,10 +380,11 @@ struct JobPane: View {
 
     private func openFile() {
         let panel = NSOpenPanel()
-        var types: [UTType] = [.svg]
+        var types: [UTType] = [.svg, .json]
         if let nc = UTType(filenameExtension: "nc") { types.append(nc) }
         if let gcode = UTType(filenameExtension: "gcode") { types.append(gcode) }
         if let ngc = UTType(filenameExtension: "ngc") { types.append(ngc) }
+        if let ink = UTType(filenameExtension: "ta4ink") { types.append(ink) }
         panel.allowedContentTypes = types
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
