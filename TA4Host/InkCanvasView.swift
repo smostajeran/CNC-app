@@ -166,10 +166,9 @@ final class InkNSView: NSView {
         let y = min(max(my, 0), workspace.travelY)
 
         let pressure: Double
-        if event.type == .tabletPoint || event.subtype == .tabletPoint {
-            pressure = Double(event.pressure)
-        } else if event.pressure > 0 {
-            pressure = Double(event.pressure)
+        // Tablet/stylus events expose pressure; mouse/trackpad usually report 0.
+        if event.subtype == .tabletPoint || event.pressure > 0 {
+            pressure = max(Double(event.pressure), 0.05)
         } else if let lastPoint {
             let dx = loc.x - lastPoint.x
             let dy = loc.y - lastPoint.y
