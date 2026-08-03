@@ -48,6 +48,10 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var calibrationNote: String?
+    @Published var motionWarning: String?
+    @Published var confirmFactoryReset = false
+    @Published var firmwareAssessment = FirmwareAssessment.assess(buildInfo: "")
+    @Published var lastProbeBanner: String = ""
 
     @Published var mode: QuillMode = .setup
     @Published var showDiagnostics = false
@@ -88,6 +92,21 @@ final class AppModel: ObservableObject {
     }
 
     var allowsManualCommands: Bool { coordinator.allowsManualCommands }
+
+    var portsEmpty: Bool { ports.isEmpty }
+
+    var isAlarm: Bool {
+        status.state.localizedCaseInsensitiveContains("alarm")
+    }
+
+    static let emptyPortHelp = """
+    No USB serial port found. Checklist:
+    • Use a data USB cable (not charge-only).
+    • Plug directly into the Mac (avoid flaky hubs).
+    • Install/allow the CH340 (WCH) driver: System Settings → General → Login Items & Extensions → Driver Extensions.
+    • Quit other apps that may hold the COM port (Bachin Draw, Candle, serial monitors).
+    • Power the machine with its 12V adapter — USB can connect with motors unpowered.
+    """
 
     /// True when Start should be blocked by an exclusive owner (not calibration wizard).
     private var isBusyBlockingJob: Bool {
@@ -130,6 +149,9 @@ final class AppModel: ObservableObject {
             Task { @MainActor in
                 self?.status = status
                 self?.runner.noteStatus(status)
+                if status.state.localizedCaseInsensitiveContains("alarm") {
+                    self?.motionWarning = "Controller is in Alarm — open Advanced and tap Unlock, then Soft reset if needed."
+                }
             }
         }
         client.onConnectionChange = { [weak self] state in
@@ -172,11 +194,17 @@ final class AppModel: ObservableObject {
     }
 
     func connect() {
+        refreshPorts()
+        if ports.isEmpty {
+            lastError = Self.emptyPortHelp
+            return
+        }
         guard let selectedPort else {
             lastError = "Select a serial port"
             return
         }
         lastError = nil
+        motionWarning = nil
         connectionState = .connecting
         UserDefaults.standard.set(selectedPort, forKey: Self.portKey)
         UserDefaults.standard.set(baudRate, forKey: Self.baudKey)
@@ -186,7 +214,11 @@ final class AppModel: ObservableObject {
         Task.detached(priority: .userInitiated) {
             do {
                 try client.connect(path: path, baudRate: baud)
-                await MainActor.run { self.connectionState = .connected }
+                await MainActor.run {
+                    self.connectionState = .connected
+                    self.motionWarning = "USB linked. Confirm the blue power switch / board POWER LED is on (12V). USB can connect with motors unpowered."
+                    self.requestStatus()
+                }
             } catch {
                 await MainActor.run {
                     self.lastError = error.localizedDescription
@@ -257,6 +289,76 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Hobbyist Calibrate wording — same as Set Zero.
+    func setDrawingOriginHere() {
+        setWorkZero()
+        if lastError == nil {
+            calibrationNote = "Start corner set. Drawings will begin from this spot."
+        }
+    }
+
+    func applyPaperSize(widthMm: Double, heightMm: Double, writeToController: Bool) {
+        guard widthMm > 10, heightMm > 10 else {
+            lastError = "Paper size must be larger than 10 mm."
+            return
+        }
+        machine.travelX = widthMm
+        machine.travelY = heightMm
+        persistMachine()
+        guard writeToController else {
+            calibrationNote = String(format: "Drawing area set to %.0f × %.0f mm in Quill.", widthMm, heightMm)
+            return
+        }
+        guard isConnected else {
+            lastError = "Connect first to save size on the machine."
+            return
+        }
+        do {
+            try coordinator.applyTravelLimits(x: widthMm, y: heightMm)
+            console.append(String(format: "--- Soft limits $130/$131 = %.1f × %.1f ---", widthMm, heightMm))
+            calibrationNote = String(
+                format: "Drawing area %.0f × %.0f mm saved in Quill and on the machine.",
+                widthMm, heightMm
+            )
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func applyInvertToController() {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        do {
+            try coordinator.setSetting("$3", value: Double(machine.directionInvertMask))
+            persistMachine()
+            console.append("--- Direction invert $3=\(machine.directionInvertMask) ---")
+            calibrationNote = "Axis flips saved to the controller."
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func requestFactoryReset() {
+        confirmFactoryReset = true
+    }
+
+    func performFactoryReset() {
+        confirmFactoryReset = false
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        do {
+            try coordinator.sendManualLine("$RST=*")
+            console.append("--- Sent $RST=* (firmware defaults). Soft-reset and Probe to reload. ---")
+            softReset()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     func goToOrigin() {
         do {
             try coordinator.goToOrigin(machine: machine)
@@ -279,8 +381,15 @@ final class AppModel: ObservableObject {
                     if !result.buildInfo.isEmpty {
                         self.machine.buildInfo = result.buildInfo
                     }
+                    self.lastProbeBanner = result.banner
+                    self.firmwareAssessment = FirmwareAssessment.assess(
+                        buildInfo: result.buildInfo,
+                        banner: result.banner,
+                        settings: result.settings
+                    )
                     self.persistMachine()
                     self.console.append("--- Probe complete ---")
+                    self.console.append("Firmware: \(self.firmwareAssessment.summary)")
                     if !result.buildInfo.isEmpty { self.console.append(result.buildInfo) }
                     if !result.settingsText.isEmpty { self.console.append(result.settingsText) }
                 }

@@ -8,7 +8,7 @@ struct QuillApp: App {
         WindowGroup("Quill") {
             ContentView()
                 .environmentObject(model)
-                .frame(minWidth: 960, minHeight: 640)
+                .frame(minWidth: 1100, minHeight: 720)
         }
         .commands {
             CommandGroup(after: .pasteboard) {
