@@ -14,7 +14,7 @@ struct ContentView: View {
             Group {
                 switch model.mode {
                 case .setup: setupMode
-                case .create: createMode
+                case .compose: PageComposerView()
                 case .run: runMode
                 }
             }
@@ -52,7 +52,7 @@ struct ContentView: View {
         HStack(spacing: 12) {
             Picker("Mode", selection: $model.mode) {
                 Text("Setup").tag(QuillMode.setup)
-                Text("Create & Position").tag(QuillMode.create)
+                Text("Compose").tag(QuillMode.compose)
                 Text("Run").tag(QuillMode.run)
             }
             .pickerStyle(.segmented)
@@ -124,7 +124,7 @@ struct ContentView: View {
                     checklistRow(model.isConnected, "Connected over USB")
                     checklistRow(model.machine.stepsPerMmX != nil && model.machine.stepsPerMmY != nil, "Probed steps/mm ($100/$101)")
                     checklistRow(model.workZeroKnown, "Work zero set this session")
-                    Text("When ready, switch to Create & Position to load a job.")
+                    Text("When ready, switch to Compose to lay out a true-size page.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .padding(.top, 8)
@@ -132,67 +132,6 @@ struct ContentView: View {
                 }
                 .padding(28)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-        }
-    }
-
-    // MARK: - Create
-
-    private var createMode: some View {
-        HSplitView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    sectionTitle("Import", subtitle: "SVG, G-code, text, or handwriting.")
-                    HStack {
-                        Button("Open…") { openFile() }
-                        Button("Paste") { model.pasteFromClipboard() }
-                        Button("Inkscape Template…") { model.exportInkscapeTemplate() }
-                    }
-                    Picker("SVG placement", selection: $model.svgPlacement) {
-                        ForEach(SVGPlacementMode.allCases, id: \.self) { mode in
-                            Text(mode.label).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.radioGroup)
-                    if model.svgPlacement == .custom {
-                        HStack {
-                            Text("Offset X")
-                            TextField("", value: $model.svgOffsetX, format: .number)
-                                .frame(width: 60)
-                            Text("Y")
-                            TextField("", value: $model.svgOffsetY, format: .number)
-                                .frame(width: 60)
-                        }
-                        .font(.caption)
-                    }
-                    Text("Original size preserves authored mm and rejects out-of-bed paths instead of clamping.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    TextPane()
-                    InkPane()
-
-                    if !model.recentJobs.isEmpty {
-                        Text("Recent")
-                            .font(.headline)
-                        ForEach(model.recentJobs, id: \.self) { path in
-                            Button(URL(fileURLWithPath: path).lastPathComponent) {
-                                model.loadJob(url: URL(fileURLWithPath: path))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .padding(16)
-                .frame(minWidth: 280, maxWidth: 320, alignment: .leading)
-            }
-
-            VStack(spacing: 0) {
-                JobPane(showRunControls: false)
-                if model.showDiagnostics {
-                    Divider()
-                    diagnosticsPane.frame(minHeight: 160)
-                }
             }
         }
     }

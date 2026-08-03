@@ -5,7 +5,7 @@ import CNCCore
 import UniformTypeIdentifiers
 
 enum QuillMode: String, CaseIterable {
-    case setup, create, run
+    case setup, compose, run
 }
 
 @MainActor
@@ -59,6 +59,17 @@ final class AppModel: ObservableObject {
     @Published var busyReason: MachineBusyReason?
     @Published var allowStartDespiteWarnings = false
 
+    // Page & Batch Composer
+    @Published var page = PageDocument()
+    @Published var selectedElementID: UUID?
+    @Published var selectedLayerID: UUID?
+    @Published var composedPage: ComposedPage?
+    @Published var optimizePaths = true
+    @Published var batch = BatchDocument()
+    @Published var csvHeaders: [String] = []
+    @Published var newTextContent = "Thank you"
+    @Published var newTextHeight = 10.0
+
     private let client = GRBLClient()
     private let coordinator: CommandCoordinator
     private let runner = JobRunner()
@@ -96,6 +107,7 @@ final class AppModel: ObservableObject {
         selectedPort = UserDefaults.standard.string(forKey: Self.portKey)
         let baud = UserDefaults.standard.integer(forKey: Self.baudKey)
         if baud > 0 { baudRate = baud }
+        selectedLayerID = page.defaultLayerID
 
         runner.attach(coordinator: coordinator, client: client)
         coordinator.onBusyChange = { [weak self] reason in
@@ -132,6 +144,9 @@ final class AppModel: ObservableObject {
                 self?.streamState = state
                 if state == .running {
                     self?.penChangeMessage = nil
+                }
+                if state == .completed {
+                    self?.markCurrentBatchPageCompleted()
                 }
             }
         }
@@ -493,6 +508,194 @@ final class AppModel: ObservableObject {
             origin: PlotPoint(x: 10, y: machine.travelY * 0.5)
         )
         loadJob(text: gcode, name: "Text.gcode", isSVG: false)
+    }
+
+    // MARK: - Page & Batch Composer
+
+    func setPageFormat(_ format: PageFormat) {
+        page.format = format
+        // Keep page on bed if possible.
+        page.bedOriginX = min(page.bedOriginX, max(0, machine.travelX - format.widthMm))
+        page.bedOriginY = min(page.bedOriginY, max(0, machine.travelY - format.heightMm))
+        recomposePage()
+    }
+
+    func addTextElement() {
+        let layerID = selectedLayerID ?? page.defaultLayerID
+        let el = PageElement(
+            name: newTextContent,
+            kind: .text(newTextContent, heightMm: newTextHeight),
+            xMm: 15,
+            yMm: page.format.heightMm * 0.45,
+            layerID: layerID
+        )
+        page.elements.append(el)
+        selectedElementID = el.id
+        recomposePage()
+    }
+
+    func addSVGToPage(url: URL) {
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let layerID = selectedLayerID ?? page.defaultLayerID
+            let el = PageElement(
+                name: url.lastPathComponent,
+                kind: .svg(text),
+                xMm: 10,
+                yMm: 10,
+                layerID: layerID
+            )
+            page.elements.append(el)
+            selectedElementID = el.id
+            recomposePage()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func addInkToPage() {
+        guard !inkDocument.strokes.isEmpty else {
+            lastError = "Draw handwriting first"
+            return
+        }
+        let layerID = selectedLayerID ?? page.defaultLayerID
+        let el = PageElement(
+            name: "Handwriting",
+            kind: .ink(inkDocument),
+            xMm: 5,
+            yMm: 5,
+            layerID: layerID
+        )
+        page.elements.append(el)
+        selectedElementID = el.id
+        recomposePage()
+    }
+
+    func duplicateSelectedElement() {
+        guard let id = selectedElementID else { return }
+        page.duplicateElement(id)
+        recomposePage()
+    }
+
+    func deleteSelectedElement() {
+        guard let id = selectedElementID else { return }
+        page.elements.removeAll { $0.id == id }
+        selectedElementID = nil
+        recomposePage()
+    }
+
+    func addPenLayer() {
+        let n = page.layers.count + 1
+        let pens = PenPreset.library
+        let pen = pens[(n - 1) % pens.count]
+        let id = page.addLayer(named: "Pen \(n)", pen: pen)
+        selectedLayerID = id
+        recomposePage()
+    }
+
+    func recomposePage() {
+        do {
+            let composed = try PageComposer.compose(page, profile: machine, optimize: optimizePaths)
+            composedPage = composed
+            previewJob = composed.job.simplified()
+            jobText = composed.gcode
+            jobName = page.name
+            runner.loadGCode(jobText)
+            preflightReport = JobPreflight.assess(
+                gcode: jobText,
+                profile: machine,
+                machineState: status.state,
+                workZeroKnown: workZeroKnown,
+                isBusy: isBusyBlockingJob
+            )
+        } catch {
+            composedPage = nil
+            // Keep last good preview; surface error.
+            lastError = error.localizedDescription
+        }
+    }
+
+    func applyPageToJob() {
+        recomposePage()
+        guard composedPage != nil else { return }
+        mode = .run
+    }
+
+    func framePage() {
+        recomposePage()
+        guard let composed = composedPage else { return }
+        loadJob(text: composed.frameGCode, name: "Frame-\(page.format.id).gcode", isSVG: false)
+        mode = .run
+    }
+
+    func importCSVForBatch() {
+        let panel = NSOpenPanel()
+        var types: [UTType] = [.plainText]
+        if let csv = UTType(filenameExtension: "csv") { types.insert(csv, at: 0) }
+        panel.allowedContentTypes = types
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let parsed = VariableData.parseCSV(text)
+            csvHeaders = parsed.headers
+            var map: [UUID: String] = [:]
+            for el in page.elements {
+                if case .text(let raw, _) = el.kind, raw.contains("{") {
+                    map[el.id] = raw
+                }
+            }
+            batch = VariableData.makeBatch(
+                template: page,
+                fieldMap: map,
+                rows: parsed.rows,
+                pauseBetweenPages: true
+            )
+            console.append("--- Batch: \(parsed.rows.count) page(s) from \(url.lastPathComponent) ---")
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func previewBatchPage(_ pageID: UUID) {
+        guard let material = VariableData.materialize(batch: batch, pageID: pageID) else { return }
+        page = material
+        selectedLayerID = page.defaultLayerID
+        recomposePage()
+    }
+
+    func skipBatchPage(_ pageID: UUID) {
+        guard let idx = batch.pages.firstIndex(where: { $0.id == pageID }) else { return }
+        batch.pages[idx].status = .skipped
+    }
+
+    func queueNextBatchPage() {
+        guard let next = batch.pages.first(where: {
+            $0.status == .ready || $0.status == .pending || $0.status == .pausedForPaper
+        }) else {
+            lastError = "Batch queue is empty"
+            return
+        }
+        previewBatchPage(next.id)
+        if let idx = batch.pages.firstIndex(where: { $0.id == next.id }) {
+            batch.pages[idx].status = .plotting
+            batch.currentIndex = idx
+        }
+        applyPageToJob()
+    }
+
+    func markCurrentBatchPageCompleted() {
+        guard !batch.pages.isEmpty,
+              batch.pages.indices.contains(batch.currentIndex),
+              batch.pages[batch.currentIndex].status == .plotting else { return }
+        batch.pages[batch.currentIndex].status = .completed
+        if batch.pauseBetweenPages,
+           let next = batch.pages.first(where: { $0.status == .ready || $0.status == .pending }) {
+            if let idx = batch.pages.firstIndex(where: { $0.id == next.id }) {
+                batch.pages[idx].status = .pausedForPaper
+            }
+            penChangeMessage = "Page done — replace paper, then Queue next page"
+        }
     }
 
     func applyInkToJob() {

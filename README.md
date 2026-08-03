@@ -64,13 +64,21 @@ SVG paths with varying `stroke-width` also map to pressure when imported. Save i
 
 ## Modes
 
-Quill is organized as **Setup → Create & Position → Run**:
+Quill is organized as **Setup → Compose → Run**:
 
 - **Setup:** connect, probe, set zero, axis wizard, pen Z / pressure
-- **Create:** import SVG/G-code (Original size / Fit to bed / Custom), text, ink
-- **Run:** preflight, Frame Job (pen-up boundary), Start / Hold / Resume / Stop
+- **Compose:** true-size **Page & Batch Composer** — paper format on the 390×200 mm bed, SVG/text/ink elements, Pen & Layer Studio, path optimisation / ETA, Frame Page, CSV variable-data queue
+- **Run:** preflight, Hold / Resume / Stop, pen-change pauses
 
 Diagnostics (console) is optional via the toggle in the top bar. Manual console/jog/probe are locked while a job owns the serial port.
+
+### Page composer quick start
+
+1. **Compose** → choose A4 / A5 / envelope / invitation / custom page size; place paper origin on the bed.
+2. Add single-line text, SVG (true size), or handwriting; assign layers to pens (pressure, feed, passes).
+3. Review draw/travel distance and ETA; enable **Optimize paths** to cut pen-up travel.
+4. **Frame Page** (pen up) then **Preflight & Run**.
+5. For mail-merge: put `{name}` in text, **Import CSV…**, preview/skip pages, **Queue next page** (pauses for paper change).
 
 ## Axis scale wizard (10 mm = 10 mm)
 
