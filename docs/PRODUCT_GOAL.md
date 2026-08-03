@@ -73,6 +73,18 @@ Sourced from Bachin wiki tips, Apple Support Communities, and GRBL issues:
 | Setup / Create / Run modes + Frame Job + Diagnostics panel | Shipped |
 | USB reconnect recovery, CI, notarization, DMG | Deferred |
 
+## Page & Batch Composer (in progress)
+
+| Need | Status |
+|------|--------|
+| True-size page formats on 390×200 bed (A4/A5/envelope/card/custom) | Shipped |
+| SVG / text / handwriting elements with move/rotate/scale/duplicate | Shipped |
+| Pen & Layer Studio (pressure, feed, delay, passes, colour) | Shipped |
+| Path optimisation + draw/travel/ETA | Shipped |
+| Frame Page + preflight from composed job | Shipped |
+| CSV variable-data queue with pause / skip / preview | Shipped (MVP) |
+| Reliable path-level resume, image-to-plot, camera alignment, handwriting font studio | Deferred |
+
 ## Deferred
 
-Handwriting font libraries / Bachin Write Android sync, Excel/tables, image raster/trace, DXF, full multi-pen gallery UI, laser mode, Windows host, iOS (needs Wi‑Fi/BLE bridge), App Store polish, Inkscape extension that owns the serial port.
+Handwriting font libraries / Bachin Write Android sync, Excel/tables, image raster/trace, DXF, laser mode, Windows host, iOS (needs Wi‑Fi/BLE bridge), App Store polish, Inkscape extension that owns the serial port, camera registration, path-level resume after disconnect.
