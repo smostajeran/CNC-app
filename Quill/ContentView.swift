@@ -19,6 +19,19 @@ struct ContentView: View {
                 Section("Control") {
                     ControlPane()
                 }
+                Section("Calibrate") {
+                    Button("Axis scale wizard…") {
+                        model.showCalibrationWizard = true
+                    }
+                    Text("Mark two points per axis, measure, adjust so 10 mm = 10 mm.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    if let sx = model.machine.stepsPerMmX, let sy = model.machine.stepsPerMmY {
+                        Text(String(format: "Steps/mm X %.2f · Y %.2f", sx, sy))
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Section("Text") {
                     TextPane()
                 }
@@ -104,6 +117,11 @@ struct ContentView: View {
             Button("OK", role: .cancel) { model.lastError = nil }
         } message: {
             Text(model.lastError ?? "")
+        }
+        .sheet(isPresented: $model.showCalibrationWizard) {
+            CalibrationWizardView()
+                .environmentObject(model)
+                .frame(minWidth: 760, minHeight: 520)
         }
     }
 

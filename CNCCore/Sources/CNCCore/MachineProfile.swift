@@ -100,8 +100,28 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         if let v = settings["$100"] { stepsPerMmX = v }
         if let v = settings["$101"] { stepsPerMmY = v }
         if let v = settings["$102"] { stepsPerMmZ = v }
+        if let dir = settings["$3"] {
+            let mask = Int(dir)
+            invertX = (mask & 1) != 0
+            invertY = (mask & 2) != 0
+            invertZ = (mask & 4) != 0
+        }
         clampPressureRange()
     }
+
+    /// Correct steps/mm after a distance check: `new = current × (commanded / measured)`.
+    /// When measured &lt; commanded the machine moved too little → increase steps/mm.
+    public static func correctedStepsPerMm(
+        current: Double,
+        commandedMm: Double,
+        measuredMm: Double
+    ) -> Double? {
+        guard current > 0, commandedMm > 0, measuredMm > 0.1 else { return nil }
+        return current * (commandedMm / measuredMm)
+    }
+
+    /// Fallback steps/mm when Probe has not filled `$100`/`$101` yet (typical TA-4).
+    public static let defaultStepsPerMm: Double = 80
 
     public func saveToDefaults(_ defaults: UserDefaults = .standard) {
         var copy = self

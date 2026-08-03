@@ -28,6 +28,8 @@ final class AppModel: ObservableObject {
     @Published var penChangeMessage: String?
     @Published var inkDocument = InkDocument()
     @Published var showInkCanvas: Bool = false
+    @Published var showCalibrationWizard: Bool = false
+    @Published var calibrationNote: String?
 
     private let client = GRBLClient()
     private let runner = JobRunner()
@@ -220,6 +222,86 @@ final class AppModel: ObservableObject {
 
     func penUp() { try? client.penUp(machine) }
     func penDown() { try? client.penDown(machine) }
+
+    // MARK: - Axis scale calibration wizard
+
+    /// Dot the paper at the current XY (pen down briefly).
+    func markCalibrationPoint() {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        do {
+            try client.markPoint(machine: machine)
+            console.append("--- Calibration mark ---")
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Pen up, then jog a known distance along one axis for the ruler check.
+    func runCalibrationMove(axis: CalibrationAxis, distanceMm: Double) {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        guard distanceMm >= 1 else {
+            lastError = "Choose a move of at least 1 mm."
+            return
+        }
+        penUp()
+        switch axis {
+        case .x: jog(dx: distanceMm, dy: 0)
+        case .y: jog(dx: 0, dy: distanceMm)
+        }
+        console.append(String(format: "--- Calibration move %@ %.1f mm ---", axis.shortLabel, distanceMm))
+    }
+
+    /// After marking two points and measuring, correct GRBL steps/mm so commanded mm ≈ real mm.
+    func applyDistanceCalibration(axis: CalibrationAxis, commandedMm: Double, measuredMm: Double) {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        guard measuredMm > 0.1 else {
+            lastError = "Enter the length you measured with a ruler (mm)."
+            return
+        }
+        let current: Double
+        switch axis {
+        case .x: current = machine.stepsPerMmX ?? MachineProfile.defaultStepsPerMm
+        case .y: current = machine.stepsPerMmY ?? MachineProfile.defaultStepsPerMm
+        }
+        guard let corrected = MachineProfile.correctedStepsPerMm(
+            current: current,
+            commandedMm: commandedMm,
+            measuredMm: measuredMm
+        ) else {
+            lastError = "Could not calculate a new scale from those numbers."
+            return
+        }
+        do {
+            switch axis {
+            case .x:
+                try client.applyStepsPerMm(x: corrected, y: nil)
+                machine.stepsPerMmX = corrected
+            case .y:
+                try client.applyStepsPerMm(x: nil, y: corrected)
+                machine.stepsPerMmY = corrected
+            }
+            persistMachine()
+            console.append(String(
+                format: "--- %@ steps/mm → %.4f (was %.4f) ---",
+                axis.shortLabel, corrected, current
+            ))
+            calibrationNote = String(
+                format: "%@ calibrated: commanded %.0f mm, measured %.1f mm → steps/mm %.3f.",
+                axis.label, commandedMm, measuredMm, corrected
+            )
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
 
     func loadJob(url: URL) {
         do {
@@ -548,5 +630,32 @@ final class AppModel: ObservableObject {
             }
         }
         return Double(num)
+    }
+}
+
+enum CalibrationAxis: String, CaseIterable, Identifiable {
+    case x, y
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .x: return "Left–right (X)"
+        case .y: return "Front–back (Y)"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .x: return "X"
+        case .y: return "Y"
+        }
+    }
+
+    var prompt: String {
+        switch self {
+        case .x: return "along the left–right axis"
+        case .y: return "along the front–back axis"
+        }
     }
 }

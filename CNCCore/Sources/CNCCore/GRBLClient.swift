@@ -128,6 +128,31 @@ public final class GRBLClient: @unchecked Sendable {
         try sendLine("G90 G0 X0 Y0")
     }
 
+    /// Write a GRBL `$` setting (e.g. `$100=80`).
+    public func setSetting(_ key: String, value: Double) throws {
+        let name = key.hasPrefix("$") ? key : "$\(key)"
+        try sendLine("\(name)=\(fmt(value))")
+    }
+
+    /// Soft max travel in mm (`$130` / `$131`).
+    public func applyTravelLimits(x: Double, y: Double) throws {
+        try setSetting("$130", value: x)
+        try setSetting("$131", value: y)
+    }
+
+    /// Steps per mm (`$100` / `$101`).
+    public func applyStepsPerMm(x: Double?, y: Double?) throws {
+        if let x { try setSetting("$100", value: x) }
+        if let y { try setSetting("$101", value: y) }
+    }
+
+    /// Brief pen-down mark on paper, then lift (for calibration dots).
+    public func markPoint(machine: MachineProfile, dwellSeconds: Double = 0.15) throws {
+        try penDown(machine)
+        Thread.sleep(forTimeInterval: dwellSeconds)
+        try penUp(machine)
+    }
+
     public func probe() throws -> GRBLProbeResult {
         stopPolling()
         defer { startPolling() }

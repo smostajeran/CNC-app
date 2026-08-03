@@ -52,6 +52,13 @@ Sourced from Bachin wiki tips, Apple Support Communities, and GRBL issues:
 | Light/hard Z calibration + sweep test | Shipped |
 | `.ta4ink` save/load + SVG export | Shipped |
 
+## v1.3 — Axis scale wizard
+
+| Need | Status |
+|------|--------|
+| Blank-page wizard: mark 2 points per axis, measure, adjust `$100`/`$101` | Shipped |
+| Correct steps/mm so commanded mm ≈ measured mm (e.g. 10 mm = 10 mm) | Shipped |
+
 ## Deferred
 
 Handwriting font libraries / Bachin Write Android sync, Excel/tables, image raster/trace, DXF, full multi-pen gallery UI, laser mode, Windows host, iOS (needs Wi‑Fi/BLE bridge), App Store polish, Inkscape extension that owns the serial port.

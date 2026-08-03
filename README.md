@@ -62,6 +62,17 @@ The TA-4 has no force sensor — pressure is approximated by **motor Z depth** a
 
 SVG paths with varying `stroke-width` also map to pressure when imported. Save ink as `.ta4ink` or export SVG for Inkscape.
 
+## Axis scale wizard (10 mm = 10 mm)
+
+Sidebar **Calibrate → Axis scale wizard**:
+
+1. Put a blank white sheet under the pen; set zero at the start corner.
+2. For X (then Y): mark point 1 → move a known distance (10 / 50 / 100 mm) → mark point 2.
+3. Measure between the marks with a ruler and enter the real length.
+4. Quill writes corrected steps/mm to GRBL (`$100` / `$101`) so commanded distance matches paper.
+
+Longer spans (50–100 mm) give a more accurate scale; the goal is still 1:1 (10 mm commanded → 10 mm on paper).
+
 ## Probe / stream (USB)
 
 ```bash
