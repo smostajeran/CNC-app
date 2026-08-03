@@ -14,13 +14,42 @@ public enum TextOverflowPolicy: String, Equatable, Sendable, Codable, CaseIterab
     case showOverflow
     case expandBox
     case reduceFontSize
-    /// Only after explicit user confirmation.
+    /// Not implemented — must never silently truncate.
     case truncateConfirmed
+
+    public var isImplemented: Bool {
+        switch self {
+        case .showOverflow, .expandBox, .reduceFontSize: return true
+        case .truncateConfirmed: return false
+        }
+    }
 }
 
 public enum FontKind: String, Equatable, Sendable, Codable, CaseIterable {
     case singleLinePlotter
+    /// Not implemented — must never silently fall back to stick font.
     case outline
+
+    public var isImplemented: Bool {
+        switch self {
+        case .singleLinePlotter: return true
+        case .outline: return false
+        }
+    }
+}
+
+public enum TextLayoutError: Error, LocalizedError, Equatable {
+    case unimplementedFont(FontKind)
+    case unimplementedOverflowPolicy(TextOverflowPolicy)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unimplementedFont(let kind):
+            return "Font kind “\(kind.rawValue)” is not implemented yet."
+        case .unimplementedOverflowPolicy(let policy):
+            return "Overflow policy “\(policy.rawValue)” is not implemented yet."
+        }
+    }
 }
 
 /// Typography for a multiline text box (all sizes in millimetres unless noted).
@@ -143,12 +172,38 @@ public enum TextLayoutEngine {
         return missing
     }
 
+    /// Validates that style options are implemented; throws instead of silent fallback.
+    public static func validateStyle(_ style: TextBoxStyle) throws {
+        if !style.fontKind.isImplemented {
+            throw TextLayoutError.unimplementedFont(style.fontKind)
+        }
+        if !style.overflowPolicy.isImplemented {
+            throw TextLayoutError.unimplementedOverflowPolicy(style.overflowPolicy)
+        }
+    }
+
     public static func layout(
         text: String,
         boxWidthMm: Double,
         boxHeightMm: Double,
         style: TextBoxStyle
     ) -> TextLayoutResult {
+        // Refuse unimplemented options rather than silently falling back.
+        if !style.fontKind.isImplemented || !style.overflowPolicy.isImplemented {
+            return TextLayoutResult(
+                lines: [],
+                contentHeightMm: 0,
+                contentWidthMm: 0,
+                overflows: true,
+                overflowMessage: !style.fontKind.isImplemented
+                    ? "Outline fonts are not implemented yet."
+                    : "Truncate is not implemented — choose Show overflow, Expand box, or Reduce font.",
+                missingGlyphs: [],
+                usedFontSizeMm: style.fontSizeMm,
+                isRTL: style.isRTL || detectRTL(text)
+            )
+        }
+
         var workingStyle = style
         if workingStyle.isRTL == false {
             workingStyle.isRTL = detectRTL(text)

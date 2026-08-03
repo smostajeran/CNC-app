@@ -80,6 +80,8 @@ final class AppModel: ObservableObject {
     @Published var canvasZoom: Double = 1
     @Published var showTravelPaths = true
     @Published var plotOnlySelectedLayer = false
+    @Published var pendingAutosaveRecovery: QuillProject?
+    @Published var showAutosaveRecoveryAlert = false
 
     private let client = GRBLClient()
     private let coordinator: CommandCoordinator
@@ -98,6 +100,7 @@ final class AppModel: ObservableObject {
     private static let baudKey = "quill.lastBaud"
     private static let recentProjectsKey = "quill.recentProjects"
     private static let autosaveName = "QuillAutosave.quill"
+    private static let lastProjectPathKey = "quill.lastProjectPath"
 
     var isConnected: Bool {
         if case .connected = connectionState { return true }
@@ -640,18 +643,44 @@ final class AppModel: ObservableObject {
         QuillProject(page: page, batch: batch)
     }
 
+    /// Hard plot blocker — never bypassed by “allow warnings”.
+    var hasBlockingTextOverflow: Bool {
+        if let composed = composedPage, composed.hasBlockingOverflow { return true }
+        return page.hasTextOverflow()
+    }
+
+    func beginEditTransaction() {
+        guard !suppressHistory else { return }
+        _ = documentHistory.beginTransaction(currentProject)
+        refreshHistoryFlags()
+    }
+
+    func endEditTransaction() {
+        documentHistory.endTransaction()
+        textEditCheckpointTaken = false
+        geometryCheckpointTaken = false
+        refreshHistoryFlags()
+    }
+
+    /// Single-shot undo checkpoint (add/delete/one-shot actions).
     func checkpointDocument() {
         guard !suppressHistory else { return }
+        if documentHistory.isTransactionOpen {
+            // Already coalescing; do not push another entry.
+            return
+        }
         documentHistory.checkpoint(currentProject)
         refreshHistoryFlags()
     }
 
     func undoDocument() {
+        endEditTransaction()
         guard let previous = documentHistory.undo(current: currentProject) else { return }
         applyProject(previous, recordHistory: false)
     }
 
     func redoDocument() {
+        endEditTransaction()
         guard let next = documentHistory.redo(current: currentProject) else { return }
         applyProject(next, recordHistory: false)
     }
@@ -663,9 +692,11 @@ final class AppModel: ObservableObject {
 
     private func applyProject(_ project: QuillProject, recordHistory: Bool) {
         suppressHistory = true
-        page = project.page
-        batch = project.batch
-        page.migrateLegacyText()
+        var next = project
+        next.page.migrateLegacyText()
+        next.page.applyTextBoxSizing()
+        page = next.page
+        batch = next.batch
         selectedLayerID = page.defaultLayerID
         if let id = selectedElementID, !page.elements.contains(where: { $0.id == id }) {
             selectedElementID = nil
@@ -678,12 +709,38 @@ final class AppModel: ObservableObject {
     }
 
     func setPageFormat(_ format: PageFormat) {
-        checkpointDocument()
+        beginEditTransaction()
         page.format = format
         // Keep page on bed if possible.
         page.bedOriginX = min(page.bedOriginX, max(0, machine.travelX - format.widthMm))
         page.bedOriginY = min(page.bedOriginY, max(0, machine.travelY - format.heightMm))
+        endEditTransaction()
         recomposePage()
+    }
+
+    func updatePageSetting(_ mutate: (inout PageDocument) -> Void) {
+        beginEditTransaction()
+        mutate(&page)
+        endEditTransaction()
+        recomposePage()
+    }
+
+    func updateLayer(_ id: UUID, coalesce: Bool = false, _ mutate: (inout PageLayer) -> Void) {
+        guard let idx = page.layers.firstIndex(where: { $0.id == id }) else { return }
+        if coalesce {
+            beginEditTransaction()
+        } else {
+            checkpointDocument()
+        }
+        mutate(&page.layers[idx])
+        if !coalesce {
+            // one-shot already checkpointed
+        }
+        recomposePage()
+    }
+
+    func endLayerSliderEdit() {
+        endEditTransaction()
     }
 
     func selectElement(_ id: UUID?, additive: Bool = false) {
@@ -722,6 +779,7 @@ final class AppModel: ObservableObject {
             zOrder: (page.elements.map(\.zOrder).max() ?? 0) + 1
         )
         page.elements.append(el)
+        page.applyTextBoxSizing()
         selectElement(el.id)
         recomposePage()
     }
@@ -856,13 +914,13 @@ final class AppModel: ObservableObject {
     private var geometryCheckpointTaken = false
 
     func beginGeometryEdit() {
-        if !geometryCheckpointTaken {
-            checkpointDocument()
-            geometryCheckpointTaken = true
-        }
+        guard !geometryCheckpointTaken else { return }
+        beginEditTransaction()
+        geometryCheckpointTaken = true
     }
 
     func endGeometryEdit() {
+        endEditTransaction()
         geometryCheckpointTaken = false
     }
 
@@ -975,30 +1033,48 @@ final class AppModel: ObservableObject {
     func renameSelected(_ name: String) {
         guard let id = selectedElementID,
               let idx = page.elements.firstIndex(where: { $0.id == id }) else { return }
-        checkpointDocument()
+        beginEditTransaction()
         page.elements[idx].name = name
+    }
+
+    func commitRename() {
+        endEditTransaction()
     }
 
     private var textEditCheckpointTaken = false
 
     func beginTextEditing() {
-        if !textEditCheckpointTaken {
-            checkpointDocument()
-            textEditCheckpointTaken = true
-        }
+        guard !textEditCheckpointTaken else { return }
+        beginEditTransaction()
+        textEditCheckpointTaken = true
     }
 
     func endTextEditing() {
+        guard textEditCheckpointTaken || documentHistory.isTransactionOpen else { return }
+        page.applyTextBoxSizing()
+        endEditTransaction()
         textEditCheckpointTaken = false
+        recomposePage()
     }
 
     func updateTextBox(text: String? = nil, style: TextBoxStyle? = nil) {
         guard let id = selectedElementID,
               let idx = page.elements.firstIndex(where: { $0.id == id }),
               case .textBox(let current, let currentStyle) = page.elements[idx].kind else { return }
+        let nextStyle = style ?? currentStyle
+        // Never silently fall back — refuse unimplemented options outright.
+        if let style, !style.fontKind.isImplemented {
+            lastError = "Outline fonts are not implemented yet."
+            return
+        }
+        if let style, !style.overflowPolicy.isImplemented {
+            lastError = "Truncate is not implemented — choose Show overflow, Expand box, or Reduce font."
+            return
+        }
         beginTextEditing()
-        page.elements[idx].kind = .textBox(text: text ?? current, style: style ?? currentStyle)
+        page.elements[idx].kind = .textBox(text: text ?? current, style: nextStyle)
         if let text { page.elements[idx].name = String(text.prefix(40)) }
+        page.applyTextBoxSizing()
         recomposePage()
     }
 
@@ -1039,7 +1115,9 @@ final class AppModel: ObservableObject {
             project.touch()
             try project.save(to: dest)
             projectURL = dest
+            UserDefaults.standard.set(dest.path, forKey: Self.lastProjectPathKey)
             rememberRecentProject(dest)
+            try? FileManager.default.removeItem(at: autosaveURL())
             console.append("--- Saved project \(dest.lastPathComponent) ---")
         } catch {
             lastError = error.localizedDescription
@@ -1056,6 +1134,7 @@ final class AppModel: ObservableObject {
             documentHistory.clear()
             applyProject(project, recordHistory: false)
             projectURL = url
+            UserDefaults.standard.set(url.path, forKey: Self.lastProjectPathKey)
             rememberRecentProject(url)
             console.append("--- Opened \(url.lastPathComponent) ---")
         } catch {
@@ -1127,15 +1206,46 @@ final class AppModel: ObservableObject {
     private func recoverAutosaveIfNeeded() {
         let url = autosaveURL()
         guard FileManager.default.fileExists(atPath: url.path),
-              let project = try? QuillProject.load(from: url),
-              !project.page.elements.isEmpty else { return }
-        page = project.page
-        batch = project.batch
-        selectedLayerID = page.defaultLayerID
+              let autosaved = try? QuillProject.load(from: url),
+              !autosaved.page.elements.isEmpty else { return }
+
+        let autosaveDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))
+            .flatMap(\.contentModificationDate) ?? autosaved.modifiedAt
+
+        if let path = UserDefaults.standard.string(forKey: Self.lastProjectPathKey) {
+            let projectURL = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: projectURL.path),
+               let saved = try? QuillProject.load(from: projectURL) {
+                let savedDate = (try? projectURL.resourceValues(forKeys: [.contentModificationDateKey]))
+                    .flatMap(\.contentModificationDate) ?? saved.modifiedAt
+                // Only offer recovery when autosave is newer than the last saved project.
+                guard autosaveDate > savedDate.addingTimeInterval(1) else { return }
+                self.projectURL = projectURL
+            }
+        }
+
+        pendingAutosaveRecovery = autosaved
+        showAutosaveRecoveryAlert = true
+    }
+
+    func acceptAutosaveRecovery() {
+        guard let project = pendingAutosaveRecovery else { return }
+        documentHistory.clear()
+        applyProject(project, recordHistory: false)
+        pendingAutosaveRecovery = nil
+        showAutosaveRecoveryAlert = false
         console.append("--- Recovered autosave ---")
     }
 
+    func discardAutosaveRecovery() {
+        pendingAutosaveRecovery = nil
+        showAutosaveRecoveryAlert = false
+        try? FileManager.default.removeItem(at: autosaveURL())
+        console.append("--- Discarded autosave ---")
+    }
+
     func recomposePage() {
+        page.applyTextBoxSizing()
         do {
             var composePage = page
             if plotOnlySelectedLayer, let lid = selectedLayerID {
@@ -1171,8 +1281,9 @@ final class AppModel: ObservableObject {
     func applyPageToJob() {
         recomposePage()
         guard let composed = composedPage else { return }
-        if composed.hasBlockingOverflow, !allowStartDespiteWarnings {
-            lastError = "Resolve text overflow (or allow warnings) before plotting."
+        // Text overflow is never bypassed by allowStartDespiteWarnings.
+        if composed.hasBlockingOverflow || page.hasTextOverflow() {
+            lastError = "Resolve text overflow before plotting. This cannot be bypassed."
             return
         }
         mode = .run
@@ -1239,11 +1350,28 @@ final class AppModel: ObservableObject {
             lastError = "Batch queue is empty"
             return
         }
-        previewBatchPage(next.id)
-        if let idx = batch.pages.firstIndex(where: { $0.id == next.id }) {
-            batch.pages[idx].status = .plotting
-            batch.currentIndex = idx
+        // Re-validate this record before entering plotting.
+        batch.pages = VariableData.validateRecords(batch: batch)
+        guard let idx = batch.pages.firstIndex(where: { $0.id == next.id }) else { return }
+        let record = batch.pages[idx]
+        if VariableData.isBlocked(record) {
+            batch.pages[idx].status = .failed
+            let reason = record.errorMessage ?? "Overflow or missing fields"
+            batch.pages[idx].errorMessage = reason
+            lastError = "Batch record #\(record.index + 1) blocked: \(reason)"
+            previewBatchPage(record.id)
+            return
         }
+        previewBatchPage(record.id)
+        // Block if the materialized page still overflows.
+        if hasBlockingTextOverflow {
+            batch.pages[idx].status = .failed
+            batch.pages[idx].errorMessage = lastError ?? "Text overflow"
+            lastError = "Batch record #\(record.index + 1) blocked: \(batch.pages[idx].errorMessage ?? "overflow")"
+            return
+        }
+        batch.pages[idx].status = .plotting
+        batch.currentIndex = idx
         applyPageToJob()
     }
 
@@ -1419,6 +1547,11 @@ final class AppModel: ObservableObject {
             lastError = "Connect first"
             return
         }
+        // Text overflow is a hard blocker and cannot be bypassed by allowStartDespiteWarnings.
+        if hasBlockingTextOverflow {
+            lastError = "Resolve text overflow before plotting. This cannot be bypassed."
+            return
+        }
         try? coordinator.requestStatus()
         let report = JobPreflight.assess(
             gcode: jobText,
@@ -1433,7 +1566,7 @@ final class AppModel: ObservableObject {
                 ?? "Preflight failed"
             return
         }
-        // Warnings are surfaced via preflightReport for UI; only errors block Start.
+        // Soft preflight warnings may be allowed; text overflow never is.
         penChangeMessage = nil
         runner.loadGCode(jobText)
         do {

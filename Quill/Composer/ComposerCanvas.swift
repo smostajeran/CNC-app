@@ -6,6 +6,7 @@ import CNCCore
 struct ComposerCanvas: View {
     @EnvironmentObject private var model: AppModel
     @State private var isDragging = false
+    @State private var keyMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -64,6 +65,7 @@ struct ComposerCanvas: View {
             nudgeBar
         }
         .onAppear { installKeyMonitor() }
+        .onDisappear { removeKeyMonitor() }
     }
 
     private var toolbar: some View {
@@ -74,7 +76,11 @@ struct ComposerCanvas: View {
             Button("+") { model.canvasZoom = min(3, model.canvasZoom + 0.1) }
             Toggle("Travel", isOn: $model.showTravelPaths)
             Spacer()
-            if let warn = model.composedPage?.warnings.first {
+            if model.hasBlockingTextOverflow {
+                Text("Overflow blocks plotting")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.orange)
+            } else if let warn = model.composedPage?.warnings.first {
                 Text(warn)
                     .font(.caption2)
                     .foregroundStyle(.orange)
@@ -261,7 +267,8 @@ struct ComposerCanvas: View {
     }
 
     private func installKeyMonitor() {
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        removeKeyMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.window?.isKeyWindow == true else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let fine = model.page.editor.nudgeFineMm
@@ -295,6 +302,13 @@ struct ComposerCanvas: View {
                 }
                 return event
             }
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
         }
     }
 

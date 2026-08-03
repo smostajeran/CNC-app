@@ -23,6 +23,7 @@ public struct QuillProject: Equatable, Sendable, Codable {
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.page.migrateLegacyText()
+        self.page.applyTextBoxSizing()
     }
 
     public mutating func touch() {
@@ -42,6 +43,7 @@ public struct QuillProject: Equatable, Sendable, Codable {
         decoder.dateDecodingStrategy = .iso8601
         var project = try decoder.decode(QuillProject.self, from: data)
         project.page.migrateLegacyText()
+        project.page.applyTextBoxSizing()
         if project.version < currentVersion {
             project.version = currentVersion
         }
@@ -57,11 +59,13 @@ public struct QuillProject: Equatable, Sendable, Codable {
     }
 }
 
-/// Undo/redo stack over `QuillProject` snapshots.
+/// Undo/redo stack over `QuillProject` snapshots with explicit edit transactions.
 public final class DocumentHistory: @unchecked Sendable {
     private var undoStack: [QuillProject] = []
     private var redoStack: [QuillProject] = []
     private let limit: Int
+    /// When true, further `beginTransaction` calls do not push another checkpoint.
+    private var transactionOpen = false
 
     public init(limit: Int = 80) {
         self.limit = limit
@@ -69,6 +73,21 @@ public final class DocumentHistory: @unchecked Sendable {
 
     public var canUndo: Bool { !undoStack.isEmpty }
     public var canRedo: Bool { !redoStack.isEmpty }
+    public var isTransactionOpen: Bool { transactionOpen }
+    public var undoCount: Int { undoStack.count }
+
+    /// Begin a coalesced edit. Checkpoints the current project once until `endTransaction()`.
+    @discardableResult
+    public func beginTransaction(_ project: QuillProject) -> Bool {
+        guard !transactionOpen else { return false }
+        checkpoint(project)
+        transactionOpen = true
+        return true
+    }
+
+    public func endTransaction() {
+        transactionOpen = false
+    }
 
     public func checkpoint(_ project: QuillProject) {
         undoStack.append(project)
@@ -79,12 +98,14 @@ public final class DocumentHistory: @unchecked Sendable {
     }
 
     public func undo(current: QuillProject) -> QuillProject? {
+        endTransaction()
         guard let previous = undoStack.popLast() else { return nil }
         redoStack.append(current)
         return previous
     }
 
     public func redo(current: QuillProject) -> QuillProject? {
+        endTransaction()
         guard let next = redoStack.popLast() else { return nil }
         undoStack.append(current)
         return next
@@ -93,6 +114,7 @@ public final class DocumentHistory: @unchecked Sendable {
     public func clear() {
         undoStack.removeAll()
         redoStack.removeAll()
+        transactionOpen = false
     }
 }
 

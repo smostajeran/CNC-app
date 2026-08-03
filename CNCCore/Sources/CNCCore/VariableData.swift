@@ -143,7 +143,13 @@ public enum VariableData {
             }
             return copy
         }
+        doc.applyTextBoxSizing()
         return doc
+    }
+
+    /// Whether a record is blocked from plotting (overflow or missing fields).
+    public static func isBlocked(_ page: BatchPage) -> Bool {
+        page.overflows || !page.missingFields.isEmpty
     }
 
     /// Validate overflow and missing `{fields}` independently for every CSV record.
@@ -157,7 +163,8 @@ public enum VariableData {
             }
             updated.overflows = false
             updated.errorMessage = nil
-            if let material = materialize(batch: batch, pageID: page.id) {
+            if var material = materialize(batch: batch, pageID: page.id) {
+                material.applyTextBoxSizing()
                 for el in material.elements {
                     if case .textBox(let text, let style) = el.kind {
                         let layout = TextLayoutEngine.layout(

@@ -4,7 +4,10 @@ import CNCCore
 struct TextBoxEditor: View {
     let text: String
     let style: TextBoxStyle
+    let boxWidthMm: Double
+    let boxHeightMm: Double
     let onChange: (String, TextBoxStyle) -> Void
+    let onEditingEnded: () -> Void
 
     @State private var draftText: String = ""
     @State private var draftStyle: TextBoxStyle = TextBoxStyle()
@@ -17,14 +20,17 @@ struct TextBoxEditor: View {
                 .font(.body)
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.25)))
                 .onChange(of: draftText) { _ in onChange(draftText, draftStyle) }
-                .onDisappear { }
+                .onDisappear { onEditingEnded() }
 
             let layout = TextLayoutEngine.layout(
                 text: draftText,
-                boxWidthMm: 120,
-                boxHeightMm: 40,
+                boxWidthMm: boxWidthMm,
+                boxHeightMm: boxHeightMm,
                 style: draftStyle
             )
+            Text(String(format: "Box %.1f × %.1f mm", boxWidthMm, boxHeightMm))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             if layout.overflows {
                 Label(layout.overflowMessage ?? "Overflow", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2)
@@ -36,13 +42,15 @@ struct TextBoxEditor: View {
                     .foregroundStyle(.red)
             }
 
-            Picker("Font kind", selection: Binding(
-                get: { draftStyle.fontKind },
-                set: { draftStyle.fontKind = $0; onChange(draftText, draftStyle) }
-            )) {
-                Text("Single-line plotter").tag(FontKind.singleLinePlotter)
-                Text("Outline").tag(FontKind.outline)
-            }
+            // Only implemented font kinds are selectable.
+            Text("Font: Single-line plotter")
+                .font(.caption)
+            Text("Outline fonts — not implemented")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text("Convert text to paths — not implemented")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             HStack {
                 labeled("Size", value: Binding(
@@ -98,8 +106,10 @@ struct TextBoxEditor: View {
                 Text("Show overflow").tag(TextOverflowPolicy.showOverflow)
                 Text("Expand box").tag(TextOverflowPolicy.expandBox)
                 Text("Reduce font").tag(TextOverflowPolicy.reduceFontSize)
-                Text("Truncate (confirm)").tag(TextOverflowPolicy.truncateConfirmed)
             }
+            Text("Truncate — not implemented")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             Toggle("RTL", isOn: Binding(
                 get: { draftStyle.isRTL },
@@ -109,9 +119,18 @@ struct TextBoxEditor: View {
         .onAppear {
             draftText = text
             draftStyle = style
+            if !draftStyle.fontKind.isImplemented {
+                draftStyle.fontKind = .singleLinePlotter
+            }
+            if !draftStyle.overflowPolicy.isImplemented {
+                draftStyle.overflowPolicy = .showOverflow
+            }
         }
         .onChange(of: text) { newValue in
             if newValue != draftText { draftText = newValue }
+        }
+        .onChange(of: style) { newValue in
+            if newValue != draftStyle { draftStyle = newValue }
         }
     }
 

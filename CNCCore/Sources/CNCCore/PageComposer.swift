@@ -81,21 +81,24 @@ public enum PageComposer {
                 commands.append(.penChange("Pause before \(layer.name)"))
             }
             for el in elems {
-                var element = el
                 if case .textBox(let text, let style) = el.kind {
+                    if !style.fontKind.isImplemented {
+                        throw PageComposerError.elementFailed(
+                            "“\(el.name)”: outline fonts are not implemented yet."
+                        )
+                    }
+                    if !style.overflowPolicy.isImplemented {
+                        throw PageComposerError.elementFailed(
+                            "“\(el.name)”: truncate is not implemented — choose another overflow policy."
+                        )
+                    }
                     let layout = TextLayoutEngine.layout(
                         text: text,
                         boxWidthMm: el.widthMm,
                         boxHeightMm: el.heightMm,
                         style: style
                     )
-                    if style.heightMode == .automatic || style.overflowPolicy == .expandBox {
-                        let needed = layout.contentHeightMm + style.paddingMm * 2
-                        if needed > element.heightMm {
-                            element.heightMm = needed
-                        }
-                    }
-                    if layout.overflows, style.overflowPolicy != .expandBox, style.heightMode == .fixed {
+                    if layout.overflows {
                         blockingOverflow = true
                         warnings.append("“\(el.name)”: \(layout.overflowMessage ?? "overflow")")
                     }
@@ -103,14 +106,21 @@ public enum PageComposer {
                         warnings.append("“\(el.name)”: missing glyphs \(layout.missingGlyphs.map(String.init).joined())")
                     }
                 }
-                let local = try plotJob(for: element, profile: profile)
-                let placed = transform(local, element: element, page: page)
+                let local = try plotJob(for: el, profile: profile)
+                let placed = transform(local, element: el, page: page)
                 let b = placed.bounds
-                if b.minX < pageBounds.minX - 0.5 || b.minY < pageBounds.minY - 0.5
-                    || b.maxX > pageBounds.maxX + 0.5 || b.maxY > pageBounds.maxY + 0.5 {
-                    throw PageComposerError.outOfPage(
-                        "“\(el.name)” extends outside the \(page.format.name) page. Move or scale it."
-                    )
+                let outsidePage = b.minX < pageBounds.minX - 0.5 || b.minY < pageBounds.minY - 0.5
+                    || b.maxX > pageBounds.maxX + 0.5 || b.maxY > pageBounds.maxY + 0.5
+                if outsidePage {
+                    // Text overflow already blocks plotting; surface OOB as a blocking warning
+                    // instead of throwing so the inspector can show the overflow reason.
+                    if case .textBox = el.kind, blockingOverflow {
+                        warnings.append("“\(el.name)” extends outside the \(page.format.name) page (overflow).")
+                    } else {
+                        throw PageComposerError.outOfPage(
+                            "“\(el.name)” extends outside the \(page.format.name) page. Move or scale it."
+                        )
+                    }
                 }
                 let withPressure = placed.applyingPressure(layer.pen.pressure)
                 commands.append(contentsOf: withPressure.commands)

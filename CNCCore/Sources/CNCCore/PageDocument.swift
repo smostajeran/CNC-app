@@ -384,6 +384,46 @@ public struct PageDocument: Equatable, Sendable, Codable {
         }
     }
 
+    /// Persist automatic / expand-box heights onto each text element so canvas,
+    /// inspector, save/load, preview, and G-code share identical dimensions.
+    @discardableResult
+    public mutating func applyTextBoxSizing() -> Bool {
+        var changed = false
+        for i in elements.indices {
+            guard case .textBox(let text, let style) = elements[i].kind else { continue }
+            let layout = TextLayoutEngine.layout(
+                text: text,
+                boxWidthMm: elements[i].widthMm,
+                boxHeightMm: elements[i].heightMm,
+                style: style
+            )
+            if style.heightMode == .automatic || style.overflowPolicy == .expandBox {
+                let needed = max(layout.contentHeightMm + style.paddingMm * 2, style.fontSizeMm + style.paddingMm * 2)
+                if abs(elements[i].heightMm - needed) > 0.05 {
+                    elements[i].heightMm = needed
+                    changed = true
+                }
+            }
+        }
+        return changed
+    }
+
+    /// True when any visible text box currently overflows (hard plot blocker).
+    public func hasTextOverflow() -> Bool {
+        for el in elements where el.visible {
+            if case .textBox(let text, let style) = el.kind {
+                let layout = TextLayoutEngine.layout(
+                    text: text,
+                    boxWidthMm: el.widthMm,
+                    boxHeightMm: el.heightMm,
+                    style: style
+                )
+                if layout.overflows { return true }
+            }
+        }
+        return false
+    }
+
     /// Convert paper-space point to bed coordinates.
     public func paperToBed(x: Double, y: Double) -> (x: Double, y: Double) {
         (bedOriginX + x, bedOriginY + y)

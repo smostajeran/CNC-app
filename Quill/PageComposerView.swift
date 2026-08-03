@@ -51,7 +51,7 @@ struct PageComposerView: View {
                 .disabled(model.composedPage == nil || !model.allowsManualCommands)
             Button("Preflight & Run") { model.applyPageToJob() }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.composedPage == nil || (model.composedPage?.hasBlockingOverflow == true && !model.allowStartDespiteWarnings))
+                .disabled(model.composedPage == nil || model.hasBlockingTextOverflow)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

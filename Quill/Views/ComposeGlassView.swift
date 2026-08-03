@@ -25,7 +25,7 @@ struct ComposeGlassView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.steel)
-                .disabled(model.composedPage == nil || (model.composedPage?.hasBlockingOverflow == true && !model.allowStartDespiteWarnings))
+                .disabled(model.composedPage == nil || model.hasBlockingTextOverflow)
             }
             .padding(.horizontal, 28)
             .padding(.top, 20)
@@ -41,6 +41,12 @@ struct ComposeGlassView: View {
             if model.composedPage == nil && !model.page.elements.isEmpty {
                 model.recomposePage()
             }
+        }
+        .alert("Recover autosave?", isPresented: $model.showAutosaveRecoveryAlert) {
+            Button("Recover") { model.acceptAutosaveRecovery() }
+            Button("Discard", role: .destructive) { model.discardAutosaveRecovery() }
+        } message: {
+            Text("A newer autosave was found. Recover unsaved work, or discard it?")
         }
     }
 }

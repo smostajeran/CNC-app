@@ -66,6 +66,7 @@ final class PrecisionComposerTests: XCTestCase {
                 layerID: page.defaultLayerID
             ),
         ]
+        page.applyTextBoxSizing()
         let composed = try PageComposer.compose(page, profile: .ta4, optimize: false)
         XCTAssertFalse(composed.hasBlockingOverflow)
         XCTAssertGreaterThan(composed.metrics.drawDistanceMm, 100)

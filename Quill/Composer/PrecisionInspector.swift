@@ -63,26 +63,52 @@ struct PrecisionInspector: View {
             }
             sliderNumeric("Bed X", value: Binding(
                 get: { model.page.bedOriginX },
-                set: { model.checkpointDocument(); model.page.bedOriginX = $0; model.recomposePage() }
-            ), range: 0...model.machine.travelX, step: 0.1)
+                set: {
+                    model.beginEditTransaction()
+                    model.page.bedOriginX = $0
+                    model.recomposePage()
+                }
+            ), range: 0...model.machine.travelX, step: 0.1, onEditEnd: { model.endEditTransaction() })
             sliderNumeric("Bed Y", value: Binding(
                 get: { model.page.bedOriginY },
-                set: { model.checkpointDocument(); model.page.bedOriginY = $0; model.recomposePage() }
-            ), range: 0...model.machine.travelY, step: 0.1)
+                set: {
+                    model.beginEditTransaction()
+                    model.page.bedOriginY = $0
+                    model.recomposePage()
+                }
+            ), range: 0...model.machine.travelY, step: 0.1, onEditEnd: { model.endEditTransaction() })
             Picker("Coordinates", selection: Binding(
                 get: { model.page.editor.coordinateSpace },
-                set: { model.page.editor.coordinateSpace = $0 }
+                set: { space in model.updatePageSetting { $0.editor.coordinateSpace = space } }
             )) {
                 Text("Paper").tag(CoordinateSpace.paper)
                 Text("Bed").tag(CoordinateSpace.bed)
             }
             .pickerStyle(.segmented)
-            Toggle("Show grid", isOn: $model.page.editor.showGrid)
-            Toggle("Snap to grid", isOn: $model.page.editor.snapToGrid)
-            Toggle("Snap to paper", isOn: $model.page.editor.snapToPaper)
-            Toggle("Snap to objects", isOn: $model.page.editor.snapToObjects)
-            labeled("Grid mm", value: $model.page.editor.gridSpacingMm)
-            labeled("Margin mm", value: $model.page.editor.marginMm)
+            Toggle("Show grid", isOn: Binding(
+                get: { model.page.editor.showGrid },
+                set: { v in model.updatePageSetting { $0.editor.showGrid = v } }
+            ))
+            Toggle("Snap to grid", isOn: Binding(
+                get: { model.page.editor.snapToGrid },
+                set: { v in model.updatePageSetting { $0.editor.snapToGrid = v } }
+            ))
+            Toggle("Snap to paper", isOn: Binding(
+                get: { model.page.editor.snapToPaper },
+                set: { v in model.updatePageSetting { $0.editor.snapToPaper = v } }
+            ))
+            Toggle("Snap to objects", isOn: Binding(
+                get: { model.page.editor.snapToObjects },
+                set: { v in model.updatePageSetting { $0.editor.snapToObjects = v } }
+            ))
+            labeled("Grid mm", value: Binding(
+                get: { model.page.editor.gridSpacingMm },
+                set: { v in model.updatePageSetting { $0.editor.gridSpacingMm = v } }
+            ))
+            labeled("Margin mm", value: Binding(
+                get: { model.page.editor.marginMm },
+                set: { v in model.updatePageSetting { $0.editor.marginMm = v } }
+            ))
         }
     }
 
@@ -130,6 +156,7 @@ struct PrecisionInspector: View {
                 get: { model.page.elements[idx].name },
                 set: { model.renameSelected($0) }
             ))
+            .onSubmit { model.commitRename() }
             Text(el.typeLabel).font(.caption).foregroundStyle(.secondary)
 
             sliderNumeric("X mm", value: Binding(
@@ -184,7 +211,10 @@ struct PrecisionInspector: View {
                 TextBoxEditor(
                     text: text,
                     style: style,
-                    onChange: { t, s in model.updateTextBox(text: t, style: s) }
+                    boxWidthMm: el.widthMm,
+                    boxHeightMm: el.heightMm,
+                    onChange: { t, s in model.updateTextBox(text: t, style: s) },
+                    onEditingEnded: { model.endTextEditing() }
                 )
             }
 
@@ -233,27 +263,35 @@ struct PrecisionInspector: View {
                 Button("Queue next page") { model.queueNextBatchPage() }
                     .buttonStyle(.borderedProminent)
                 ForEach(model.batch.pages.prefix(16)) { page in
-                    HStack {
-                        Text("#\(page.index + 1)")
-                            .font(.caption.monospaced())
-                        Text(page.values["name"] ?? page.status.rawValue)
-                            .font(.caption)
-                            .lineLimit(1)
-                        if page.overflows {
-                            Image(systemName: "exclamationmark.triangle.fill")
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text("#\(page.index + 1)")
+                                .font(.caption.monospaced())
+                            Text(page.values["name"] ?? page.status.rawValue)
+                                .font(.caption)
+                                .lineLimit(1)
+                            if page.overflows || page.status == .failed {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                    .font(.caption2)
+                            }
+                            if !page.missingFields.isEmpty {
+                                Image(systemName: "questionmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                    .font(.caption2)
+                            }
+                            Spacer()
+                            Button("Preview") { model.previewBatchPage(page.id) }
+                                .font(.caption2)
+                            Button("Skip") { model.skipBatchPage(page.id) }
+                                .font(.caption2)
+                        }
+                        if let reason = page.errorMessage, page.overflows || page.status == .failed || !page.missingFields.isEmpty {
+                            Text(reason)
+                                .font(.caption2)
                                 .foregroundStyle(.orange)
-                                .font(.caption2)
+                                .lineLimit(2)
                         }
-                        if !page.missingFields.isEmpty {
-                            Image(systemName: "questionmark.circle.fill")
-                                .foregroundStyle(.red)
-                                .font(.caption2)
-                        }
-                        Spacer()
-                        Button("Preview") { model.previewBatchPage(page.id) }
-                            .font(.caption2)
-                        Button("Skip") { model.skipBatchPage(page.id) }
-                            .font(.caption2)
                     }
                 }
             }

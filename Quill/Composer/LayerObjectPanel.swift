@@ -72,84 +72,89 @@ struct LayerObjectPanel: View {
     }
 
     private func layerInspector(_ idx: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let layerID = model.page.layers[idx].id
+        return VStack(alignment: .leading, spacing: 6) {
             TextField("Name", text: Binding(
                 get: { model.page.layers[idx].name },
-                set: {
-                    model.checkpointDocument()
-                    model.page.layers[idx].name = $0
+                set: { name in
+                    model.beginEditTransaction()
+                    model.page.layers[idx].name = name
                 }
             ))
+            .onSubmit { model.endEditTransaction() }
             TextField("Colour #hex", text: Binding(
                 get: { model.page.layers[idx].pen.colorHex },
-                set: {
-                    model.checkpointDocument()
-                    model.page.layers[idx].pen.colorHex = $0
+                set: { hex in
+                    model.beginEditTransaction()
+                    model.page.layers[idx].pen.colorHex = hex
                     model.recomposePage()
                 }
             ))
+            .onSubmit { model.endEditTransaction() }
             HStack {
                 Text("Pressure")
-                Slider(value: Binding(
-                    get: { model.page.layers[idx].pen.pressure },
-                    set: {
-                        model.page.layers[idx].pen.pressure = $0
-                        model.recomposePage()
-                    }
-                ), in: 0...1)
+                Slider(
+                    value: Binding(
+                        get: { model.page.layers[idx].pen.pressure },
+                        set: { value in
+                            model.beginEditTransaction()
+                            model.page.layers[idx].pen.pressure = value
+                            model.recomposePage()
+                        }
+                    ),
+                    in: 0...1
+                ) { editing in
+                    if !editing { model.endLayerSliderEdit() }
+                }
             }
             HStack {
                 labeled("Feed", value: Binding(
                     get: { model.page.layers[idx].pen.drawFeed },
-                    set: {
-                        model.page.layers[idx].pen.drawFeed = $0
+                    set: { value in
+                        model.beginEditTransaction()
+                        model.page.layers[idx].pen.drawFeed = value
                         model.recomposePage()
                     }
                 ))
                 labeled("Passes", value: Binding(
                     get: { Double(model.page.layers[idx].pen.passes) },
-                    set: {
-                        model.page.layers[idx].pen.passes = max(1, Int($0))
+                    set: { value in
+                        model.beginEditTransaction()
+                        model.page.layers[idx].pen.passes = max(1, Int(value))
                         model.recomposePage()
                     }
                 ))
             }
             labeled("Lift delay ms", value: Binding(
                 get: { model.page.layers[idx].pen.liftDelayMs },
-                set: {
-                    model.page.layers[idx].pen.liftDelayMs = $0
+                set: { value in
+                    model.beginEditTransaction()
+                    model.page.layers[idx].pen.liftDelayMs = value
                     model.recomposePage()
                 }
             ))
             Toggle("Pause before", isOn: Binding(
                 get: { model.page.layers[idx].pen.pauseBefore },
-                set: {
-                    model.checkpointDocument()
-                    model.page.layers[idx].pen.pauseBefore = $0
-                    model.recomposePage()
+                set: { value in
+                    model.updateLayer(layerID) { $0.pen.pauseBefore = value }
                 }
             ))
             Toggle("Pause after", isOn: Binding(
                 get: { model.page.layers[idx].pen.pauseAfter },
-                set: {
-                    model.checkpointDocument()
-                    model.page.layers[idx].pen.pauseAfter = $0
-                    model.recomposePage()
+                set: { value in
+                    model.updateLayer(layerID) { $0.pen.pauseAfter = value }
                 }
             ))
             Toggle("Visible", isOn: Binding(
                 get: { model.page.layers[idx].visible },
-                set: {
-                    model.checkpointDocument()
-                    model.page.layers[idx].visible = $0
-                    model.recomposePage()
+                set: { value in
+                    model.updateLayer(layerID) { $0.visible = value }
                 }
             ))
             Toggle("Locked", isOn: Binding(
                 get: { model.page.layers[idx].locked },
-                set: {
-                    model.checkpointDocument()
-                    model.page.layers[idx].locked = $0
+                set: { value in
+                    model.updateLayer(layerID) { $0.locked = value }
                 }
             ))
             if let m = model.composedPage {
@@ -221,13 +226,14 @@ struct LayerObjectPanel: View {
     }
 
     private func moveLayers(from: IndexSet, to: Int) {
-        model.checkpointDocument()
+        model.beginEditTransaction()
         var layers = model.page.layers.sorted { $0.order < $1.order }
         layers.move(fromOffsets: from, toOffset: to)
         for (i, _) in layers.enumerated() {
             layers[i].order = i
         }
         model.page.layers = layers
+        model.endEditTransaction()
         model.recomposePage()
     }
 
