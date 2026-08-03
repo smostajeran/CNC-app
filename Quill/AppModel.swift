@@ -316,7 +316,8 @@ final class AppModel: ObservableObject {
             lastError = "Choose a move of at least 1 mm."
             return
         }
-        let pos = status.wpos != .zero ? status.wpos : status.mpos
+        // Prefer work coordinates after Set Zero; otherwise machine position.
+        let pos = workZeroKnown ? status.wpos : status.mpos
         let remaining: Double
         switch axis {
         case .x: remaining = machine.travelX - pos.x

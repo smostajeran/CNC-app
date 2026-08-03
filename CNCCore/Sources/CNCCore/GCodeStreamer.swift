@@ -130,6 +130,9 @@ public final class GCodeStreamer: @unchecked Sendable {
         let line = lines[index]
         let isPen = GCodeParser.isPenChange(line.uppercased())
 
+        // Never queue motion behind an in-flight or host-paused pen change.
+        if penChangePending || inFlightIsPenChange.contains(true) { return nil }
+
         if isPen {
             // Drain planner buffer before sending M0 so motion finishes first.
             guard inFlightCosts.isEmpty else { return nil }
@@ -141,9 +144,6 @@ public final class GCodeStreamer: @unchecked Sendable {
             awaitingOk = true
             return line
         }
-
-        // Never queue motion behind an unresolved pen-change ack.
-        if penChangePending { return nil }
 
         let cost = Self.byteCost(line)
         guard bytesInFlight + cost <= Self.rxBufferSize else { return nil }

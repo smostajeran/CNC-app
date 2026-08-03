@@ -148,8 +148,11 @@ public final class GRBLClient: @unchecked Sendable {
 
     /// Write steps/mm, then read `$$` back and return the confirmed values.
     public func applyStepsPerMmWithReadback(x: Double?, y: Double?) throws -> (x: Double?, y: Double?) {
+        stopPolling()
+        defer { startPolling() }
         try applyStepsPerMm(x: x, y: y)
         Thread.sleep(forTimeInterval: 0.15)
+        _ = try drain(timeout: 0.2)
         try sendLine("$$")
         let text = try collectUntilOk(timeout: 3.0)
         let settings = GRBLProbeResult.parseSettings(text)

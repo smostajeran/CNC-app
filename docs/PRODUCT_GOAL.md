@@ -59,6 +59,20 @@ Sourced from Bachin wiki tips, Apple Support Communities, and GRBL issues:
 | Blank-page wizard: mark 2 points per axis, measure, adjust `$100`/`$101` | Shipped |
 | Correct steps/mm so commanded mm ≈ measured mm (e.g. 10 mm = 10 mm) | Shipped |
 
+## Stabilization & machine safety (in progress)
+
+| Need | Status |
+|------|--------|
+| Exclusive serial `CommandCoordinator` (no jog/console during stream) | Shipped |
+| Host-side M0 pen-change pause + Resume | Shipped |
+| Modal G-code parser + job preflight before Start | Shipped |
+| Ack-based progress; Idle before 100% complete | Shipped |
+| Calibration requires probe; read-back + travel limits | Shipped |
+| SVG Original size / Fit to bed / Custom; reject OOB (no silent clamp) | Shipped |
+| Handwriting resample + pressure smoothing | Shipped |
+| Setup / Create / Run modes + Frame Job + Diagnostics panel | Shipped |
+| USB reconnect recovery, CI, notarization, DMG | Deferred |
+
 ## Deferred
 
 Handwriting font libraries / Bachin Write Android sync, Excel/tables, image raster/trace, DXF, full multi-pen gallery UI, laser mode, Windows host, iOS (needs Wi‑Fi/BLE bridge), App Store polish, Inkscape extension that owns the serial port.
