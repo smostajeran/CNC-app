@@ -4,6 +4,8 @@ options:
   deploymentTarget:
     macOS: "13.0"
   createIntermediateGroups: true
+  # Keep generated project readable by Xcode 15+ / 16 CI images.
+  xcodeVersion: "16.0"
 settings:
   base:
     SWIFT_VERSION: "5.9"
