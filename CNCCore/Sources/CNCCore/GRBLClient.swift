@@ -146,6 +146,16 @@ public final class GRBLClient: @unchecked Sendable {
         if let y { try setSetting("$101", value: y) }
     }
 
+    /// Write steps/mm, then read `$$` back and return the confirmed values.
+    public func applyStepsPerMmWithReadback(x: Double?, y: Double?) throws -> (x: Double?, y: Double?) {
+        try applyStepsPerMm(x: x, y: y)
+        Thread.sleep(forTimeInterval: 0.15)
+        try sendLine("$$")
+        let text = try collectUntilOk(timeout: 3.0)
+        let settings = GRBLProbeResult.parseSettings(text)
+        return (settings["$100"], settings["$101"])
+    }
+
     /// Brief pen-down mark on paper, then lift (for calibration dots).
     public func markPoint(machine: MachineProfile, dwellSeconds: Double = 0.15) throws {
         try penDown(machine)

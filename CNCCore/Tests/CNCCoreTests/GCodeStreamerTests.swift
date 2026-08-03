@@ -11,32 +11,65 @@ final class GCodeStreamerTests: XCTestCase {
         XCTAssertEqual(lines, ["G0 X0", "G1 Y1"])
     }
 
-    func testOkPacedStreamingStillWorksForSingleLine() {
+    func testAckBasedProgressAndCompletion() {
         let s = GCodeStreamer()
+        s.requireIdleForCompletion = false
         s.load(lines: ["G0 X0", "G0 Y1", "M2"])
         s.start()
 
         XCTAssertEqual(s.nextLineToSend(), "G0 X0")
-        // Still room in 127-byte window for more short lines
         XCTAssertEqual(s.nextLineToSend(), "G0 Y1")
         XCTAssertEqual(s.nextLineToSend(), "M2")
         XCTAssertNil(s.nextLineToSend())
+        XCTAssertEqual(s.progress, 0, accuracy: 0.001)
         s.handleResponse("ok")
+        XCTAssertEqual(s.progress, 1.0 / 3.0, accuracy: 0.001)
         s.handleResponse("ok")
         s.handleResponse("ok")
         XCTAssertEqual(s.state, .completed)
         XCTAssertEqual(s.progress, 1.0, accuracy: 0.001)
     }
 
+    func testCompletionWaitsForIdleWhenRequired() {
+        let s = GCodeStreamer()
+        s.requireIdleForCompletion = true
+        s.load(lines: ["G0 X0"])
+        s.start()
+        _ = s.nextLineToSend()
+        s.handleResponse("ok")
+        XCTAssertTrue(s.awaitingIdleForCompletion)
+        XCTAssertNotEqual(s.state, .completed)
+        s.noteMachineIdle()
+        XCTAssertEqual(s.state, .completed)
+    }
+
+    func testM0DrainsThenWaitsForResume() {
+        let s = GCodeStreamer()
+        s.requireIdleForCompletion = false
+        s.load(lines: ["G0 X0", "M0", "G0 X10"])
+        s.start()
+        XCTAssertEqual(s.nextLineToSend(), "G0 X0")
+        // M0 must wait until prior ok drains.
+        XCTAssertNil(s.nextLineToSend())
+        s.handleResponse("ok")
+        XCTAssertEqual(s.nextLineToSend(), "M0")
+        XCTAssertNil(s.nextLineToSend())
+        s.handleResponse("ok")
+        XCTAssertEqual(s.state, .waitingForPenChange)
+        XCTAssertNil(s.nextLineToSend())
+        s.resume()
+        XCTAssertEqual(s.state, .running)
+        XCTAssertEqual(s.nextLineToSend(), "G0 X10")
+    }
+
     func testCharacterWindowBlocksWhenFull() {
         let s = GCodeStreamer()
-        // Each line ~60 bytes + newline → only two fit in 127
         let long = String(repeating: "A", count: 60)
         s.load(lines: [long, long, long])
         s.start()
         XCTAssertNotNil(s.nextLineToSend())
         XCTAssertNotNil(s.nextLineToSend())
-        XCTAssertNil(s.nextLineToSend()) // buffer full
+        XCTAssertNil(s.nextLineToSend())
         XCTAssertGreaterThan(s.bytesInFlight, 0)
         s.handleResponse("ok")
         XCTAssertNotNil(s.nextLineToSend())
