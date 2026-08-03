@@ -248,6 +248,27 @@ final class PrecisionComposerCorrectionsTests: XCTestCase {
         XCTAssertNotEqual(batch.pages[1].status, .plotting)
     }
 
+    func testPortraitA4DoesNotFitTA4Bed() {
+        // TA-4 bed is 390×200 mm — A4 portrait (210×297) and A4 landscape (297×210) both exceed height.
+        XCTAssertFalse(PageFormat.a4Portrait.fits(on: .ta4))
+        XCTAssertFalse(PageFormat.a4Landscape.fits(on: .ta4))
+        XCTAssertTrue(PageFormat.a5Landscape.fits(on: .ta4))
+        var page = PageDocument(format: .a4Portrait, bedOriginX: 0, bedOriginY: 0)
+        page.elements = [
+            PageElement(
+                name: "T",
+                kind: .textBox(text: "Hi", style: TextBoxStyle()),
+                layerID: page.defaultLayerID
+            ),
+        ]
+        XCTAssertThrowsError(try PageComposer.compose(page, profile: .ta4)) { error in
+            guard let pageError = error as? PageComposerError,
+                  case .pageDoesNotFitBed = pageError else {
+                return XCTFail("expected pageDoesNotFitBed")
+            }
+        }
+    }
+
     func testExpandBoxPersistsHeightOnDocument() {
         var page = PageDocument(format: .a5Landscape, bedOriginX: 20, bedOriginY: 20)
         let style = TextBoxStyle(fontSizeMm: 6, heightMode: .fixed, overflowPolicy: .expandBox)

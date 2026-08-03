@@ -649,6 +649,43 @@ final class AppModel: ObservableObject {
         return page.hasTextOverflow()
     }
 
+    /// Page format must fit the machine bed (e.g. A4 portrait on a 200 mm bed is invalid).
+    var pageFitsBed: Bool {
+        page.format.fits(on: machine)
+    }
+
+    var pageFitBlockingMessage: String? {
+        guard !pageFitsBed else { return nil }
+        return String(
+            format: "“%@” (%.0f×%.0f mm) does not fit the %.0f×%.0f mm bed.",
+            page.format.name,
+            page.format.widthMm,
+            page.format.heightMm,
+            machine.travelX,
+            machine.travelY
+        )
+    }
+
+    var suggestedLandscapeFormat: PageFormat? {
+        guard !pageFitsBed else { return nil }
+        let candidates = PageFormat.presets.filter { $0.fits(on: machine) }
+        // Prefer same-family landscape when it fits; otherwise first bed-safe preset.
+        let base = page.format.id
+            .replacingOccurrences(of: "-portrait", with: "")
+            .replacingOccurrences(of: "-landscape", with: "")
+        if let match = candidates.first(where: { $0.id == base + "-landscape" }) {
+            return match
+        }
+        if let a5 = candidates.first(where: { $0.id == "a5-landscape" }) {
+            return a5
+        }
+        return candidates.first
+    }
+
+    var canPreflightRun: Bool {
+        composedPage != nil && !hasBlockingTextOverflow && pageFitsBed
+    }
+
     func beginEditTransaction() {
         guard !suppressHistory else { return }
         _ = documentHistory.beginTransaction(currentProject)
@@ -830,15 +867,37 @@ final class AppModel: ObservableObject {
             lastError = "Draw handwriting first"
             return
         }
+        let samples = inkDocument.strokes.flatMap(\.samples)
+        guard let minX = samples.map(\.x).min(),
+              let minY = samples.map(\.y).min(),
+              let maxX = samples.map(\.x).max(),
+              let maxY = samples.map(\.y).max() else {
+            lastError = "Draw handwriting first"
+            return
+        }
         checkpointDocument()
+        // Convert machine-space ink into paper-local geometry so compose/transform
+        // does not double-apply bed coordinates (which looked like a 90° flip).
+        var localInk = inkDocument
+        localInk.strokes = inkDocument.strokes.map { stroke in
+            InkDocument.Stroke(samples: stroke.samples.map { sample in
+                InkDocument.Sample(
+                    x: sample.x - minX,
+                    y: sample.y - minY,
+                    pressure: sample.pressure
+                )
+            })
+        }
+        let paperOrigin = page.bedToPaper(x: minX, y: minY)
         let layerID = selectedLayerID ?? page.defaultLayerID
         let el = PageElement(
             name: "Handwriting",
-            kind: .ink(inkDocument),
-            xMm: 5,
-            yMm: 5,
-            widthMm: 100,
-            heightMm: 60,
+            kind: .ink(localInk),
+            xMm: max(0, paperOrigin.x),
+            yMm: max(0, paperOrigin.y),
+            widthMm: max(maxX - minX, 1),
+            heightMm: max(maxY - minY, 1),
+            anchor: .bottomLeft,
             layerID: layerID,
             zOrder: (page.elements.map(\.zOrder).max() ?? 0) + 1
         )
@@ -1279,6 +1338,10 @@ final class AppModel: ObservableObject {
     }
 
     func applyPageToJob() {
+        if let msg = pageFitBlockingMessage {
+            lastError = msg
+            return
+        }
         recomposePage()
         guard let composed = composedPage else { return }
         // Text overflow is never bypassed by allowStartDespiteWarnings.
@@ -1545,6 +1608,10 @@ final class AppModel: ObservableObject {
     func startJob() {
         guard isConnected else {
             lastError = "Connect first"
+            return
+        }
+        if let msg = pageFitBlockingMessage {
+            lastError = msg
             return
         }
         // Text overflow is a hard blocker and cannot be bypassed by allowStartDespiteWarnings.

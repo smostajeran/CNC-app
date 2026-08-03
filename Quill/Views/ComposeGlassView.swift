@@ -12,26 +12,32 @@ struct ComposeGlassView: View {
                     Text("Compose")
                         .font(Theme.stepTitleFont)
                         .foregroundStyle(Theme.ink)
-                    Text("Precision millimetre layout — paragraphs, pens, layers, and batch data.")
+                    Text("Lay out a true-size page on the bed — artwork, text, pens, and batch data.")
                         .font(Theme.bodyFont)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Undo") { model.undoDocument() }
-                    .disabled(!model.canUndo)
-                Button("Preflight & Run") {
-                    model.applyPageToJob()
-                    onContinue()
+                HStack(spacing: 8) {
+                    Button("Open") { model.openProject() }
+                    Button("Save") { model.saveProject() }
+                    Button("Save As") {
+                        model.projectURL = nil
+                        model.saveProject()
+                    }
+                    Button("Undo") { model.undoDocument() }
+                        .disabled(!model.canUndo)
+                    Button("Redo") { model.redoDocument() }
+                        .disabled(!model.canRedo)
+                    Button("Export SVG") { model.exportComposedSVG() }
+                        .disabled(model.composedPage == nil)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.steel)
-                .disabled(model.composedPage == nil || model.hasBlockingTextOverflow)
+                .font(.caption)
             }
             .padding(.horizontal, 28)
             .padding(.top, 20)
             .padding(.bottom, 12)
 
-            PageComposerView()
+            PageComposerView(onPreflightRun: onContinue)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .quillGlass(tint: Theme.steel.opacity(0.08), shape: .rect(cornerRadius: 22))
                 .padding(.horizontal, 20)
