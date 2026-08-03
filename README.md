@@ -1,6 +1,8 @@
-# CNC-app / Quill
+# Quill (CNC-app)
 
 Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replacement for the outdated Panda / Bachin Draw software.
+
+**Quill is the only app.** An earlier working name `TA4Host` appeared on some branches; that folder/target is retired. Use `Quill/` / `Quill.app` / scheme `Quill`.
 
 ## Docs
 
@@ -13,7 +15,7 @@ Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replaceme
 | Path | Role |
 |------|------|
 | `CNCCore/` | Swift package — GRBL, serial, streaming, SVG→G-code, text, normalizer |
-| `Quill/` | SwiftUI macOS app |
+| `Quill/` | SwiftUI macOS app (**main product**) |
 | `project.yml` | XcodeGen spec → `Quill.xcodeproj` |
 | `scripts/probe-grbl.py` | CLI probe for `$I` / `$$` |
 | `scripts/send-gcode.py` | Headless G-code streamer |

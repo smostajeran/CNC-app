@@ -4,6 +4,8 @@
 
 **Problem:** Stock host software (“Panda” / Bachin Draw) is outdated and Windows-only.
 
+**Product name:** **Quill** (sole macOS host app). `TA4Host` was an interim folder/target name during early branching and is not a second product.
+
 **v1 — macOS host app (`Quill`):** native SwiftUI app that replaces the essential Panda workflow over **USB serial GRBL 1.1**:
 
 - Connect / disconnect, console (`$$`, `$I`)
