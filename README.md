@@ -62,15 +62,21 @@ The TA-4 has no force sensor — pressure is approximated by **motor Z depth** a
 
 SVG paths with varying `stroke-width` also map to pressure when imported. Save ink as `.ta4ink` or export SVG for Inkscape.
 
-## Modes
+## Modes (Liquid Glass hobbyist UI)
 
-Quill is organized as **Setup → Compose → Run**:
+Guided navigation with the Quill brand header and frosted glass panels:
 
-- **Setup:** connect, probe, set zero, axis wizard, pen Z / pressure
-- **Compose:** true-size **Page & Batch Composer** — paper format on the 390×200 mm bed, SVG/text/ink elements, Pen & Layer Studio, path optimisation / ETA, Frame Page, CSV variable-data queue
-- **Run:** preflight, Hold / Resume / Stop, pen-change pauses
+**Setup → Move → Calibrate → Draw → Compose → Run → Advanced**
 
-Diagnostics (console) is optional via the toggle in the top bar. Manual console/jog/probe are locked while a job owns the serial port.
+- **Setup:** USB connect, Check machine (firmware assessment)
+- **Move:** jog pad, pen up/down
+- **Calibrate:** paper size, start corner, ruler check (+ axis scale wizard)
+- **Draw:** open SVG/G-code/ink, preview, Start/Hold/Resume
+- **Compose:** true-size Page & Batch Composer (pens, ETA, CSV queue)
+- **Run:** preflight, Frame, Start / Hold / Resume / Stop
+- **Advanced:** unlock, soft/factory reset, axis invert, diagnostics console
+
+Manual console/jog/probe stay locked while a job owns the serial port.
 
 ### Page composer quick start
 

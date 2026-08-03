@@ -123,6 +123,15 @@ public struct MachineProfile: Equatable, Sendable, Codable {
     /// Fallback steps/mm when Probe has not filled `$100`/`$101` yet (typical TA-4).
     public static let defaultStepsPerMm: Double = 80
 
+    /// GRBL `$3` direction invert mask (bit0=X, bit1=Y, bit2=Z).
+    public var directionInvertMask: Int {
+        var mask = 0
+        if invertX { mask |= 1 }
+        if invertY { mask |= 2 }
+        if invertZ { mask |= 4 }
+        return mask
+    }
+
     public func saveToDefaults(_ defaults: UserDefaults = .standard) {
         var copy = self
         copy.clampPressureRange()
