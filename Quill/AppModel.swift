@@ -931,7 +931,7 @@ final class AppModel: ObservableObject {
         height: Double? = nil,
         rotation: Double? = nil,
         scale: Double? = nil,
-        anchor: AnchorPoint? = nil,
+        anchor: PageAnchor? = nil,
         lockAspect: Bool? = nil,
         checkpoint: Bool = true
     ) {

@@ -87,8 +87,8 @@ public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
     public static let library: [PenPreset] = [.fineliner, .fountain, .marker]
 }
 
-/// Nine-point anchor for positioning (paper / element local).
-public enum AnchorPoint: String, Equatable, Sendable, Codable, CaseIterable, Identifiable {
+/// Nine-point element anchor (named to avoid clashing with SwiftUI’s Anchor APIs).
+public enum PageAnchor: String, Equatable, Sendable, Codable, CaseIterable, Identifiable {
     case topLeft, topCenter, topRight
     case centerLeft, center, centerRight
     case bottomLeft, bottomCenter, bottomRight
@@ -211,7 +211,7 @@ public struct PageElement: Equatable, Sendable, Codable, Identifiable {
     public var rotationDegrees: Double
     public var scale: Double
     public var lockAspect: Bool
-    public var anchor: AnchorPoint
+    public var anchor: PageAnchor
     public var layerID: UUID
     public var zOrder: Int
     public var visible: Bool
@@ -229,7 +229,7 @@ public struct PageElement: Equatable, Sendable, Codable, Identifiable {
         rotationDegrees: Double = 0,
         scale: Double = 1,
         lockAspect: Bool = false,
-        anchor: AnchorPoint = .bottomLeft,
+        anchor: PageAnchor = .bottomLeft,
         layerID: UUID,
         zOrder: Int = 0,
         visible: Bool = true,

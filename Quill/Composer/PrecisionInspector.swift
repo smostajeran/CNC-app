@@ -344,9 +344,9 @@ struct PrecisionInspector: View {
 }
 
 struct AnchorPicker: View {
-    @Binding var selection: AnchorPoint
+    @Binding var selection: PageAnchor
 
-    private let rows: [[AnchorPoint]] = [
+    private let rows: [[PageAnchor]] = [
         [.topLeft, .topCenter, .topRight],
         [.centerLeft, .center, .centerRight],
         [.bottomLeft, .bottomCenter, .bottomRight],
