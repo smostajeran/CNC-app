@@ -21,7 +21,7 @@ struct ContentView: View {
                 }
                 Section("Calibrate") {
                     Button("Axis scale wizard…") {
-                        model.showCalibrationWizard = true
+                        model.setCalibrationWizardOpen(true)
                     }
                     Text("Mark two points per axis, measure, adjust so 10 mm = 10 mm.")
                         .font(.caption2)

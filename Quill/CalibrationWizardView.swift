@@ -58,7 +58,10 @@ struct CalibrationWizardView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Close") { dismiss() }
+            Button("Close") {
+                model.setCalibrationWizardOpen(false)
+                dismiss()
+            }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(16)
@@ -436,7 +439,7 @@ struct CalibrationWizardView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 Button("Finish") {
-                    model.showCalibrationWizard = false
+                    model.setCalibrationWizardOpen(false)
                     dismiss()
                 }
             } else {
