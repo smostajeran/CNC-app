@@ -248,6 +248,48 @@ final class PrecisionComposerCorrectionsTests: XCTestCase {
         XCTAssertNotEqual(batch.pages[1].status, .plotting)
     }
 
+    func testMultilineParagraphBreaksSurviveQuillRoundTrip() throws {
+        let paragraph = """
+        Dear guest,
+
+        Welcome to the table.
+        Please enjoy the evening.
+
+        With gratitude,
+        The hosts
+        """
+        XCTAssertTrue(paragraph.contains("\n"))
+        var page = PageDocument(format: .a5Landscape, bedOriginX: 20, bedOriginY: 20)
+        page.elements = [
+            PageElement(
+                name: "Letter",
+                kind: .textBox(text: paragraph, style: TextBoxStyle(fontSizeMm: 6, heightMode: .automatic)),
+                xMm: 10,
+                yMm: 10,
+                widthMm: 160,
+                heightMm: 40,
+                layerID: page.defaultLayerID
+            ),
+        ]
+        page.applyTextBoxSizing()
+        let data = try QuillProject(page: page).jsonData()
+        let loaded = try QuillProject.load(from: data)
+        if case .textBox(let text, _) = loaded.page.elements[0].kind {
+            XCTAssertEqual(text, paragraph)
+            XCTAssertEqual(text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count, 8)
+        } else {
+            XCTFail("expected textBox")
+        }
+        let layout = TextLayoutEngine.layout(
+            text: paragraph,
+            boxWidthMm: 160,
+            boxHeightMm: loaded.page.elements[0].heightMm,
+            style: TextBoxStyle(fontSizeMm: 6, heightMode: .automatic)
+        )
+        XCTAssertGreaterThan(layout.lines.count, 3)
+        XCTAssertFalse(layout.overflows)
+    }
+
     func testPortraitA4DoesNotFitTA4Bed() {
         // TA-4 bed is 390×200 mm — A4 portrait (210×297) and A4 landscape (297×210) both exceed height.
         XCTAssertFalse(PageFormat.a4Portrait.fits(on: .ta4))

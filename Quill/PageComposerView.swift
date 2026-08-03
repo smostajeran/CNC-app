@@ -140,16 +140,19 @@ struct PageComposerView: View {
 
                 Divider()
                 Text("Add content").font(.headline)
-                TextEditor(text: $model.newTextContent)
-                    .frame(minHeight: 72, maxHeight: 120)
-                    .font(.body)
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.25)))
-                    .accessibilityIdentifier("compose.long-text-editor")
+                ParagraphTextEditor(
+                    label: "Paragraph text",
+                    text: $model.newTextContent,
+                    placeholder: "Type or paste a letter, address or paragraph…",
+                    onCommandReturn: { model.addTextElement() }
+                )
+                .accessibilityIdentifier("compose.long-text-editor")
                 HStack {
                     TextField("Size mm", value: $model.newTextHeight, format: .number)
                         .frame(width: 64)
                     Button("Add Paragraph") { model.addTextElement() }
                         .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.return, modifiers: .command)
                 }
                 HStack {
                     Button("Add SVG…") { openSVG() }

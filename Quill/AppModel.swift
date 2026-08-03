@@ -72,7 +72,7 @@ final class AppModel: ObservableObject {
     @Published var optimizePaths = true
     @Published var batch = BatchDocument()
     @Published var csvHeaders: [String] = []
-    @Published var newTextContent = "Thank you"
+    @Published var newTextContent = ""
     @Published var newTextHeight = 10.0
     @Published var projectURL: URL?
     @Published var canUndo = false
@@ -800,13 +800,18 @@ final class AppModel: ObservableObject {
     }
 
     func addTextElement() {
+        let content = newTextContent
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            lastError = "Enter paragraph text before adding"
+            return
+        }
         checkpointDocument()
         let layerID = selectedLayerID ?? page.defaultLayerID
         var style = TextBoxStyle(fontSizeMm: newTextHeight, heightMode: .automatic)
         style.overflowPolicy = .showOverflow
         let el = PageElement(
-            name: String(newTextContent.prefix(40)),
-            kind: .textBox(text: newTextContent, style: style),
+            name: String(content.prefix(40).replacingOccurrences(of: "\n", with: " ")),
+            kind: .textBox(text: content, style: style),
             xMm: 15,
             yMm: page.format.heightMm * 0.45,
             widthMm: min(140, page.format.widthMm - 20),
@@ -818,6 +823,7 @@ final class AppModel: ObservableObject {
         page.elements.append(el)
         page.applyTextBoxSizing()
         selectElement(el.id)
+        newTextContent = ""
         recomposePage()
     }
 

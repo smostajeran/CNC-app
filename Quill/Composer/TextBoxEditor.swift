@@ -14,13 +14,22 @@ struct TextBoxEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Paragraph").font(.subheadline.weight(.semibold))
-            TextEditor(text: $draftText)
-                .frame(minHeight: 90, maxHeight: 160)
-                .font(.body)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.25)))
-                .onChange(of: draftText) { _ in onChange(draftText, draftStyle) }
-                .onDisappear { onEditingEnded() }
+            ParagraphTextEditor(
+                label: "Paragraph text",
+                text: $draftText,
+                placeholder: "Type or paste a letter, address or paragraph…",
+                onExpandCommitted: {
+                    onChange(draftText, draftStyle)
+                },
+                onExpandCancelled: {
+                    // Binding already restored snapshot inside ParagraphTextEditor.
+                    onChange(draftText, draftStyle)
+                }
+            )
+            .onChange(of: draftText) { _ in
+                onChange(draftText, draftStyle)
+            }
+            .onDisappear { onEditingEnded() }
 
             let layout = TextLayoutEngine.layout(
                 text: draftText,
