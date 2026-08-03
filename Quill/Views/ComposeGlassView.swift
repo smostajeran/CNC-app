@@ -12,18 +12,20 @@ struct ComposeGlassView: View {
                     Text("Compose")
                         .font(Theme.stepTitleFont)
                         .foregroundStyle(Theme.ink)
-                    Text("Lay out a true-size page on the bed — artwork, text, pens, and batch data.")
+                    Text("Precision millimetre layout — paragraphs, pens, layers, and batch data.")
                         .font(Theme.bodyFont)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Button("Undo") { model.undoDocument() }
+                    .disabled(!model.canUndo)
                 Button("Preflight & Run") {
                     model.applyPageToJob()
                     onContinue()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.steel)
-                .disabled(model.composedPage == nil)
+                .disabled(model.composedPage == nil || (model.composedPage?.hasBlockingOverflow == true && !model.allowStartDespiteWarnings))
             }
             .padding(.horizontal, 28)
             .padding(.top, 20)

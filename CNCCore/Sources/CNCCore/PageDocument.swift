@@ -37,13 +37,11 @@ public struct PageFormat: Equatable, Sendable, Codable, Identifiable, Hashable {
         )
     }
 
-    /// True if the page can sit entirely on the machine bed.
     public func fits(on profile: MachineProfile) -> Bool {
         widthMm <= profile.travelX + 0.05 && heightMm <= profile.travelY + 0.05
     }
 }
 
-/// Pen / paper drawing preset applied to a layer.
 public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
     public var id: UUID
     public var name: String
@@ -52,6 +50,8 @@ public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
     public var drawFeed: Double
     public var liftDelayMs: Double
     public var passes: Int
+    public var pauseBefore: Bool
+    public var pauseAfter: Bool
     public var penDownZ: Double?
     public var penUpZ: Double?
 
@@ -63,6 +63,8 @@ public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
         drawFeed: Double = 1_500,
         liftDelayMs: Double = 0,
         passes: Int = 1,
+        pauseBefore: Bool = false,
+        pauseAfter: Bool = false,
         penDownZ: Double? = nil,
         penUpZ: Double? = nil
     ) {
@@ -73,6 +75,8 @@ public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
         self.drawFeed = drawFeed
         self.liftDelayMs = max(0, liftDelayMs)
         self.passes = max(1, passes)
+        self.pauseBefore = pauseBefore
+        self.pauseAfter = pauseAfter
         self.penDownZ = penDownZ
         self.penUpZ = penUpZ
     }
@@ -80,29 +84,139 @@ public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
     public static let fineliner = PenPreset(name: "Fineliner", colorHex: "#111111", pressure: 0.45, drawFeed: 1_800)
     public static let fountain = PenPreset(name: "Fountain pen", colorHex: "#1B3A6B", pressure: 0.7, drawFeed: 1_000, liftDelayMs: 40)
     public static let marker = PenPreset(name: "Marker", colorHex: "#C0392B", pressure: 0.85, drawFeed: 1_200, passes: 1)
-
     public static let library: [PenPreset] = [.fineliner, .fountain, .marker]
 }
 
-/// One composable item on the page (true physical size in page-local mm).
+/// Nine-point anchor for positioning (paper / element local).
+public enum AnchorPoint: String, Equatable, Sendable, Codable, CaseIterable, Identifiable {
+    case topLeft, topCenter, topRight
+    case centerLeft, center, centerRight
+    case bottomLeft, bottomCenter, bottomRight
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .topLeft: return "Top-left"
+        case .topCenter: return "Top-centre"
+        case .topRight: return "Top-right"
+        case .centerLeft: return "Centre-left"
+        case .center: return "Centre"
+        case .centerRight: return "Centre-right"
+        case .bottomLeft: return "Bottom-left"
+        case .bottomCenter: return "Bottom-centre"
+        case .bottomRight: return "Bottom-right"
+        }
+    }
+
+    /// Fraction of width/height from bottom-left origin (x: 0…1, y: 0…1, Y up).
+    public var fractions: (x: Double, y: Double) {
+        switch self {
+        case .bottomLeft: return (0, 0)
+        case .bottomCenter: return (0.5, 0)
+        case .bottomRight: return (1, 0)
+        case .centerLeft: return (0, 0.5)
+        case .center: return (0.5, 0.5)
+        case .centerRight: return (1, 0.5)
+        case .topLeft: return (0, 1)
+        case .topCenter: return (0.5, 1)
+        case .topRight: return (1, 1)
+        }
+    }
+}
+
+public enum CoordinateSpace: String, Equatable, Sendable, Codable, CaseIterable {
+    case paper
+    case bed
+}
+
+public struct GuideLine: Equatable, Sendable, Codable, Identifiable {
+    public enum Orientation: String, Codable, Sendable { case horizontal, vertical }
+    public var id: UUID
+    public var orientation: Orientation
+    /// Position in paper mm (from bottom-left for both; vertical = X, horizontal = Y).
+    public var positionMm: Double
+
+    public init(id: UUID = UUID(), orientation: Orientation, positionMm: Double) {
+        self.id = id
+        self.orientation = orientation
+        self.positionMm = positionMm
+    }
+}
+
+public struct EditorSettings: Equatable, Sendable, Codable {
+    public var gridSpacingMm: Double
+    public var showGrid: Bool
+    public var snapToGrid: Bool
+    public var snapToPaper: Bool
+    public var snapToObjects: Bool
+    public var marginMm: Double
+    public var coordinateSpace: CoordinateSpace
+    public var guides: [GuideLine]
+    public var nudgeFineMm: Double
+    public var nudgeNormalMm: Double
+    public var nudgeLargeMm: Double
+
+    public init(
+        gridSpacingMm: Double = 5,
+        showGrid: Bool = true,
+        snapToGrid: Bool = true,
+        snapToPaper: Bool = true,
+        snapToObjects: Bool = true,
+        marginMm: Double = 5,
+        coordinateSpace: CoordinateSpace = .paper,
+        guides: [GuideLine] = [],
+        nudgeFineMm: Double = 0.1,
+        nudgeNormalMm: Double = 1,
+        nudgeLargeMm: Double = 10
+    ) {
+        self.gridSpacingMm = max(0.5, gridSpacingMm)
+        self.showGrid = showGrid
+        self.snapToGrid = snapToGrid
+        self.snapToPaper = snapToPaper
+        self.snapToObjects = snapToObjects
+        self.marginMm = max(0, marginMm)
+        self.coordinateSpace = coordinateSpace
+        self.guides = guides
+        self.nudgeFineMm = nudgeFineMm
+        self.nudgeNormalMm = nudgeNormalMm
+        self.nudgeLargeMm = nudgeLargeMm
+    }
+}
+
+/// One composable item on the page (geometry in millimetres).
 public struct PageElement: Equatable, Sendable, Codable, Identifiable {
     public enum Kind: Equatable, Sendable, Codable {
         case svg(String)
+        /// Legacy short text — migrated to `textBox` on load when possible.
         case text(String, heightMm: Double)
+        case textBox(text: String, style: TextBoxStyle)
         case ink(InkDocument)
         case gcode(String)
+        case shape(ShapeKind)
+    }
+
+    public enum ShapeKind: String, Equatable, Sendable, Codable {
+        case line, rect, roundedRect, circle, ellipse, polygon, freehand
     }
 
     public var id: UUID
     public var name: String
     public var kind: Kind
-    /// Position of element origin on the page (mm, bottom-left of page).
+    /// Anchor position on the page (paper mm, Y up from page bottom-left).
     public var xMm: Double
     public var yMm: Double
+    public var widthMm: Double
+    public var heightMm: Double
     public var rotationDegrees: Double
     public var scale: Double
+    public var lockAspect: Bool
+    public var anchor: AnchorPoint
     public var layerID: UUID
+    public var zOrder: Int
     public var visible: Bool
+    public var locked: Bool
+    public var groupID: UUID?
 
     public init(
         id: UUID = UUID(),
@@ -110,20 +224,57 @@ public struct PageElement: Equatable, Sendable, Codable, Identifiable {
         kind: Kind,
         xMm: Double = 10,
         yMm: Double = 10,
+        widthMm: Double = 80,
+        heightMm: Double = 40,
         rotationDegrees: Double = 0,
         scale: Double = 1,
+        lockAspect: Bool = false,
+        anchor: AnchorPoint = .bottomLeft,
         layerID: UUID,
-        visible: Bool = true
+        zOrder: Int = 0,
+        visible: Bool = true,
+        locked: Bool = false,
+        groupID: UUID? = nil
     ) {
         self.id = id
         self.name = name
         self.kind = kind
         self.xMm = xMm
         self.yMm = yMm
+        self.widthMm = max(1, widthMm)
+        self.heightMm = max(1, heightMm)
         self.rotationDegrees = rotationDegrees
         self.scale = max(0.01, scale)
+        self.lockAspect = lockAspect
+        self.anchor = anchor
         self.layerID = layerID
+        self.zOrder = zOrder
         self.visible = visible
+        self.locked = locked
+        self.groupID = groupID
+    }
+
+    public var typeLabel: String {
+        switch kind {
+        case .svg: return "SVG"
+        case .text, .textBox: return "Text"
+        case .ink: return "Ink"
+        case .gcode: return "G-code"
+        case .shape(let s): return s.rawValue.capitalized
+        }
+    }
+
+    /// Bottom-left of the unrotated axis-aligned box in paper space.
+    public var frameOriginPaper: (x: Double, y: Double) {
+        let f = anchor.fractions
+        let w = widthMm * scale
+        let h = heightMm * scale
+        return (xMm - f.x * w, yMm - f.y * h)
+    }
+
+    public mutating func setAnchorPosition(x: Double, y: Double) {
+        xMm = x
+        yMm = y
     }
 }
 
@@ -132,6 +283,7 @@ public struct PageLayer: Equatable, Sendable, Codable, Identifiable {
     public var name: String
     public var pen: PenPreset
     public var visible: Bool
+    public var locked: Bool
     public var order: Int
 
     public init(
@@ -139,12 +291,14 @@ public struct PageLayer: Equatable, Sendable, Codable, Identifiable {
         name: String,
         pen: PenPreset = .fineliner,
         visible: Bool = true,
+        locked: Bool = false,
         order: Int = 0
     ) {
         self.id = id
         self.name = name
         self.pen = pen
         self.visible = visible
+        self.locked = locked
         self.order = order
     }
 }
@@ -152,27 +306,36 @@ public struct PageLayer: Equatable, Sendable, Codable, Identifiable {
 /// Page placed on the machine bed: paper format + origin + layers + elements.
 public struct PageDocument: Equatable, Sendable, Codable {
     public var format: PageFormat
-    /// Bottom-left of the page on the machine bed (work coordinates, mm).
     public var bedOriginX: Double
     public var bedOriginY: Double
+    public var pageRotationDegrees: Double
     public var layers: [PageLayer]
     public var elements: [PageElement]
     public var name: String
+    public var editor: EditorSettings
+    public var optimizePaths: Bool
 
     public init(
         format: PageFormat = .a5Landscape,
         bedOriginX: Double = 20,
         bedOriginY: Double = 20,
+        pageRotationDegrees: Double = 0,
         layers: [PageLayer] = [],
         elements: [PageElement] = [],
-        name: String = "Untitled page"
+        name: String = "Untitled page",
+        editor: EditorSettings = EditorSettings(),
+        optimizePaths: Bool = true
     ) {
         self.format = format
         self.bedOriginX = bedOriginX
         self.bedOriginY = bedOriginY
+        self.pageRotationDegrees = pageRotationDegrees
         self.layers = layers.isEmpty ? [PageLayer(name: "Pen 1", pen: .fineliner, order: 0)] : layers
         self.elements = elements
         self.name = name
+        self.editor = editor
+        self.optimizePaths = optimizePaths
+        migrateLegacyText()
     }
 
     public var defaultLayerID: UUID { layers.sorted { $0.order < $1.order }.first!.id }
@@ -200,10 +363,38 @@ public struct PageDocument: Equatable, Sendable, Codable {
         copy.name = el.name + " copy"
         copy.xMm += offsetMm
         copy.yMm += offsetMm
+        copy.zOrder = (elements.map(\.zOrder).max() ?? 0) + 1
         elements.append(copy)
     }
 
     public func layer(for id: UUID) -> PageLayer? {
         layers.first { $0.id == id }
+    }
+
+    public mutating func migrateLegacyText() {
+        for i in elements.indices {
+            if case .text(let t, let h) = elements[i].kind {
+                var style = TextBoxStyle(fontSizeMm: h)
+                style.heightMode = .automatic
+                elements[i].kind = .textBox(text: t, style: style)
+                if elements[i].heightMm < h * 2 {
+                    elements[i].heightMm = max(h * 3, 30)
+                }
+            }
+        }
+    }
+
+    /// Convert paper-space point to bed coordinates.
+    public func paperToBed(x: Double, y: Double) -> (x: Double, y: Double) {
+        (bedOriginX + x, bedOriginY + y)
+    }
+
+    public func bedToPaper(x: Double, y: Double) -> (x: Double, y: Double) {
+        (x - bedOriginX, y - bedOriginY)
+    }
+
+    public static func snap(_ value: Double, spacing: Double) -> Double {
+        guard spacing > 0 else { return value }
+        return (value / spacing).rounded() * spacing
     }
 }

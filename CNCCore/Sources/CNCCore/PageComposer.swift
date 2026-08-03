@@ -22,13 +22,25 @@ public struct ComposedPage: Equatable, Sendable {
     public var metrics: JobMetrics
     public var optimizedMetrics: JobMetrics
     public var frameGCode: String
+    public var warnings: [String]
+    public var hasBlockingOverflow: Bool
 
-    public init(job: PlotJob, gcode: String, metrics: JobMetrics, optimizedMetrics: JobMetrics, frameGCode: String) {
+    public init(
+        job: PlotJob,
+        gcode: String,
+        metrics: JobMetrics,
+        optimizedMetrics: JobMetrics,
+        frameGCode: String,
+        warnings: [String] = [],
+        hasBlockingOverflow: Bool = false
+    ) {
         self.job = job
         self.gcode = gcode
         self.metrics = metrics
         self.optimizedMetrics = optimizedMetrics
         self.frameGCode = frameGCode
+        self.warnings = warnings
+        self.hasBlockingOverflow = hasBlockingOverflow
     }
 }
 
@@ -56,15 +68,43 @@ public enum PageComposer {
 
         let layers = page.layers.filter(\.visible).sorted { $0.order < $1.order }
         var layerJobs: [(PageLayer, PlotJob)] = []
+        var warnings: [String] = []
+        var blockingOverflow = false
 
         for layer in layers {
-            let elems = page.elements.filter { $0.visible && $0.layerID == layer.id }
+            let elems = page.elements
+                .filter { $0.visible && $0.layerID == layer.id }
+                .sorted { $0.zOrder < $1.zOrder }
             guard !elems.isEmpty else { continue }
             var commands: [PlotCommand] = []
+            if layer.pen.pauseBefore {
+                commands.append(.penChange("Pause before \(layer.name)"))
+            }
             for el in elems {
-                let local = try plotJob(for: el, profile: profile)
-                let placed = transform(local, element: el, page: page)
-                // Soft check: warn via error if content leaves the page rectangle significantly.
+                var element = el
+                if case .textBox(let text, let style) = el.kind {
+                    let layout = TextLayoutEngine.layout(
+                        text: text,
+                        boxWidthMm: el.widthMm,
+                        boxHeightMm: el.heightMm,
+                        style: style
+                    )
+                    if style.heightMode == .automatic || style.overflowPolicy == .expandBox {
+                        let needed = layout.contentHeightMm + style.paddingMm * 2
+                        if needed > element.heightMm {
+                            element.heightMm = needed
+                        }
+                    }
+                    if layout.overflows, style.overflowPolicy != .expandBox, style.heightMode == .fixed {
+                        blockingOverflow = true
+                        warnings.append("“\(el.name)”: \(layout.overflowMessage ?? "overflow")")
+                    }
+                    if !layout.missingGlyphs.isEmpty {
+                        warnings.append("“\(el.name)”: missing glyphs \(layout.missingGlyphs.map(String.init).joined())")
+                    }
+                }
+                let local = try plotJob(for: element, profile: profile)
+                let placed = transform(local, element: element, page: page)
                 let b = placed.bounds
                 if b.minX < pageBounds.minX - 0.5 || b.minY < pageBounds.minY - 0.5
                     || b.maxX > pageBounds.maxX + 0.5 || b.maxY > pageBounds.maxY + 0.5 {
@@ -75,11 +115,13 @@ public enum PageComposer {
                 let withPressure = placed.applyingPressure(layer.pen.pressure)
                 commands.append(contentsOf: withPressure.commands)
             }
+            if layer.pen.pauseAfter {
+                commands.append(.penChange("Pause after \(layer.name)"))
+            }
             var job = PlotJob(commands: commands)
             if optimize {
                 job = PathOptimizer.optimize(job)
             }
-            // Multi-pass: repeat draw paths.
             if layer.pen.passes > 1 {
                 job = repeatPasses(job, count: layer.pen.passes)
             }
@@ -106,19 +148,21 @@ public enum PageComposer {
             travelFeed: profile.jogFeed
         )
         let frame = JobPreflight.frameGCode(bounds: pageBounds, profile: profile)
+        let useOpt = optimize
         return ComposedPage(
-            job: optimize ? optimizedJob : job,
-            gcode: optimize
+            job: useOpt ? optimizedJob : job,
+            gcode: useOpt
                 ? renderGCode(from: optimizedJob, layers: layerJobs.map(\.0), profile: profile)
                 : baseGCode,
             metrics: metrics,
             optimizedMetrics: optimizedMetrics,
-            frameGCode: frame
+            frameGCode: frame,
+            warnings: warnings,
+            hasBlockingOverflow: blockingOverflow
         )
     }
 
     public static func plotJob(for element: PageElement, profile: MachineProfile) throws -> PlotJob {
-        // Extract in local coordinates without machine-bed rejection; page bounds are checked after transform.
         var localProfile = profile
         localProfile.travelX = 10_000
         localProfile.travelY = 10_000
@@ -128,10 +172,20 @@ public enum PageComposer {
             return try SVGToGCode.plotJob(from: svg, profile: localProfile, placement: .originalSize)
         case .text(let text, let height):
             return SingleLineText.plotJob(text: text, heightMm: height, origin: PlotPoint(x: 0, y: 0))
+        case .textBox(let text, let style):
+            let layout = TextLayoutEngine.layout(
+                text: text,
+                boxWidthMm: element.widthMm,
+                boxHeightMm: element.heightMm,
+                style: style
+            )
+            return TextLayoutEngine.plotJob(layout: layout, style: style)
         case .ink(let doc):
             return doc.plotJob(smoothed: true)
         case .gcode(let text):
             return GCodeParser.parse(text, defaultFeed: profile.drawFeed, defaultRapid: profile.jogFeed).plotJob
+        case .shape(let kind):
+            return shapeJob(kind, width: element.widthMm, height: element.heightMm)
         }
     }
 
@@ -139,21 +193,74 @@ public enum PageComposer {
         let rad = element.rotationDegrees * .pi / 180
         let cosR = cos(rad)
         let sinR = sin(rad)
-        let ox = page.bedOriginX + element.xMm
-        let oy = page.bedOriginY + element.yMm
+        let origin = element.frameOriginPaper
+        let ox = page.bedOriginX + origin.x
+        let oy = page.bedOriginY + origin.y
         let s = element.scale
+        // Rotate around anchor point in paper space.
+        let anchorPaperX = element.xMm
+        let anchorPaperY = element.yMm
+        let ax = page.bedOriginX + anchorPaperX
+        let ay = page.bedOriginY + anchorPaperY
 
         let commands = job.commands.map { cmd -> PlotCommand in
             switch cmd {
             case .move(let p):
-                return .move(map(p, cosR: cosR, sinR: sinR, scale: s, ox: ox, oy: oy))
+                return .move(map(p, cosR: cosR, sinR: sinR, scale: s, ox: ox, oy: oy, ax: ax, ay: ay))
             case .line(let p):
-                return .line(map(p, cosR: cosR, sinR: sinR, scale: s, ox: ox, oy: oy))
+                return .line(map(p, cosR: cosR, sinR: sinR, scale: s, ox: ox, oy: oy, ax: ax, ay: ay))
             case .penChange(let label):
                 return .penChange(label)
             }
         }
         return PlotJob(commands: commands)
+    }
+
+    private static func shapeJob(_ kind: PageElement.ShapeKind, width: Double, height: Double) -> PlotJob {
+        switch kind {
+        case .rect, .roundedRect:
+            return PlotJob(commands: [
+                .move(PlotPoint(x: 0, y: 0)),
+                .line(PlotPoint(x: width, y: 0)),
+                .line(PlotPoint(x: width, y: height)),
+                .line(PlotPoint(x: 0, y: height)),
+                .line(PlotPoint(x: 0, y: 0)),
+            ])
+        case .line:
+            return PlotJob(commands: [
+                .move(PlotPoint(x: 0, y: height / 2)),
+                .line(PlotPoint(x: width, y: height / 2)),
+            ])
+        case .circle, .ellipse:
+            let cx = width / 2, cy = height / 2
+            let rx = width / 2, ry = height / 2
+            var cmds: [PlotCommand] = []
+            let steps = 48
+            for i in 0...steps {
+                let t = Double(i) / Double(steps) * 2 * .pi
+                let p = PlotPoint(x: cx + rx * cos(t), y: cy + ry * sin(t))
+                cmds.append(i == 0 ? .move(p) : .line(p))
+            }
+            return PlotJob(commands: cmds)
+        case .polygon:
+            let n = 6
+            let cx = width / 2, cy = height / 2
+            let rx = width / 2, ry = height / 2
+            var cmds: [PlotCommand] = []
+            for i in 0...n {
+                let t = Double(i) / Double(n) * 2 * .pi - .pi / 2
+                let p = PlotPoint(x: cx + rx * cos(t), y: cy + ry * sin(t))
+                cmds.append(i == 0 ? .move(p) : .line(p))
+            }
+            return PlotJob(commands: cmds)
+        case .freehand:
+            return PlotJob(commands: [
+                .move(PlotPoint(x: 0, y: 0)),
+                .line(PlotPoint(x: width * 0.3, y: height * 0.6)),
+                .line(PlotPoint(x: width * 0.7, y: height * 0.4)),
+                .line(PlotPoint(x: width, y: height)),
+            ])
+        }
     }
 
     private static func map(
@@ -162,13 +269,18 @@ public enum PageComposer {
         sinR: Double,
         scale: Double,
         ox: Double,
-        oy: Double
+        oy: Double,
+        ax: Double,
+        ay: Double
     ) -> PlotPoint {
-        let x = p.x * scale
-        let y = p.y * scale
-        let rx = x * cosR - y * sinR
-        let ry = x * sinR + y * cosR
-        return PlotPoint(x: ox + rx, y: oy + ry, pressure: p.pressure)
+        // Local (unrotated) point in bed space from frame origin, then rotate about anchor.
+        let lx = ox + p.x * scale
+        let ly = oy + p.y * scale
+        let dx = lx - ax
+        let dy = ly - ay
+        let rx = dx * cosR - dy * sinR
+        let ry = dx * sinR + dy * cosR
+        return PlotPoint(x: ax + rx, y: ay + ry, pressure: p.pressure)
     }
 
     private static func repeatPasses(_ job: PlotJob, count: Int) -> PlotJob {

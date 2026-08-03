@@ -52,6 +52,41 @@ public enum SingleLineText {
         return SVGToGCode.gcode(from: job, profile: profile)
     }
 
+    /// Em-unit advance width for a character (space ≈ 0.5). Missing glyphs return `nil`.
+    public static func glyphAdvance(for character: Character) -> Double? {
+        if character == " " { return 0.5 }
+        if character == "\n" || character == "\t" { return 0 }
+        let upper = character.uppercased().first ?? character
+        if let g = glyphs[character] ?? glyphs[upper] { return g.width }
+        return nil
+    }
+
+    public static func hasGlyph(for character: Character) -> Bool {
+        if character == " " || character == "\n" || character == "\t" { return true }
+        let upper = character.uppercased().first ?? character
+        return glyphs[character] != nil || glyphs[upper] != nil
+    }
+
+    /// Width in mm of a single line (no wrapping).
+    public static func measureWidthMm(
+        _ text: String,
+        heightMm: Double,
+        letterSpacing: Double = 0.2,
+        wordSpacingExtraEm: Double = 0
+    ) -> Double {
+        let scale = heightMm / 1.0
+        var width = 0.0
+        for ch in text {
+            if ch == " " {
+                width += scale * (0.5 + letterSpacing + wordSpacingExtraEm)
+                continue
+            }
+            let advance = glyphAdvance(for: ch) ?? 0.5
+            width += scale * (advance + letterSpacing)
+        }
+        return width
+    }
+
     private struct Glyph {
         var width: Double
         var strokes: [[PlotPoint]]

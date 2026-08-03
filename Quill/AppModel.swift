@@ -66,6 +66,7 @@ final class AppModel: ObservableObject {
     // Page & Batch Composer
     @Published var page = PageDocument()
     @Published var selectedElementID: UUID?
+    @Published var selectedElementIDs: Set<UUID> = []
     @Published var selectedLayerID: UUID?
     @Published var composedPage: ComposedPage?
     @Published var optimizePaths = true
@@ -73,6 +74,12 @@ final class AppModel: ObservableObject {
     @Published var csvHeaders: [String] = []
     @Published var newTextContent = "Thank you"
     @Published var newTextHeight = 10.0
+    @Published var projectURL: URL?
+    @Published var canUndo = false
+    @Published var canRedo = false
+    @Published var canvasZoom: Double = 1
+    @Published var showTravelPaths = true
+    @Published var plotOnlySelectedLayer = false
 
     private let client = GRBLClient()
     private let coordinator: CommandCoordinator
@@ -81,10 +88,16 @@ final class AppModel: ObservableObject {
     private var statusTimer: Timer?
     private var fileWatchSource: DispatchSourceFileSystemObject?
     private var fileWatchFD: Int32 = -1
+    private let documentHistory = DocumentHistory()
+    private var clipboardElements: [PageElement] = []
+    private var autosaveTimer: Timer?
+    private var suppressHistory = false
 
     private static let recentKey = "quill.recentJobs"
     private static let portKey = "quill.lastPort"
     private static let baudKey = "quill.lastBaud"
+    private static let recentProjectsKey = "quill.recentProjects"
+    private static let autosaveName = "QuillAutosave.quill"
 
     var isConnected: Bool {
         if case .connected = connectionState { return true }
@@ -127,6 +140,8 @@ final class AppModel: ObservableObject {
         let baud = UserDefaults.standard.integer(forKey: Self.baudKey)
         if baud > 0 { baudRate = baud }
         selectedLayerID = page.defaultLayerID
+        recoverAutosaveIfNeeded()
+        startAutosave()
 
         runner.attach(coordinator: coordinator, client: client)
         coordinator.onBusyChange = { [weak self] reason in
@@ -621,7 +636,49 @@ final class AppModel: ObservableObject {
 
     // MARK: - Page & Batch Composer
 
+    var currentProject: QuillProject {
+        QuillProject(page: page, batch: batch)
+    }
+
+    func checkpointDocument() {
+        guard !suppressHistory else { return }
+        documentHistory.checkpoint(currentProject)
+        refreshHistoryFlags()
+    }
+
+    func undoDocument() {
+        guard let previous = documentHistory.undo(current: currentProject) else { return }
+        applyProject(previous, recordHistory: false)
+    }
+
+    func redoDocument() {
+        guard let next = documentHistory.redo(current: currentProject) else { return }
+        applyProject(next, recordHistory: false)
+    }
+
+    private func refreshHistoryFlags() {
+        canUndo = documentHistory.canUndo
+        canRedo = documentHistory.canRedo
+    }
+
+    private func applyProject(_ project: QuillProject, recordHistory: Bool) {
+        suppressHistory = true
+        page = project.page
+        batch = project.batch
+        page.migrateLegacyText()
+        selectedLayerID = page.defaultLayerID
+        if let id = selectedElementID, !page.elements.contains(where: { $0.id == id }) {
+            selectedElementID = nil
+            selectedElementIDs = []
+        }
+        suppressHistory = false
+        if recordHistory { checkpointDocument() }
+        refreshHistoryFlags()
+        recomposePage()
+    }
+
     func setPageFormat(_ format: PageFormat) {
+        checkpointDocument()
         page.format = format
         // Keep page on bed if possible.
         page.bedOriginX = min(page.bedOriginX, max(0, machine.travelX - format.widthMm))
@@ -629,33 +686,81 @@ final class AppModel: ObservableObject {
         recomposePage()
     }
 
+    func selectElement(_ id: UUID?, additive: Bool = false) {
+        guard let id else {
+            selectedElementID = nil
+            selectedElementIDs = []
+            return
+        }
+        if additive {
+            if selectedElementIDs.contains(id) {
+                selectedElementIDs.remove(id)
+            } else {
+                selectedElementIDs.insert(id)
+            }
+            selectedElementID = selectedElementIDs.first
+        } else {
+            selectedElementID = id
+            selectedElementIDs = [id]
+        }
+    }
+
     func addTextElement() {
+        checkpointDocument()
         let layerID = selectedLayerID ?? page.defaultLayerID
+        var style = TextBoxStyle(fontSizeMm: newTextHeight, heightMode: .automatic)
+        style.overflowPolicy = .showOverflow
         let el = PageElement(
-            name: newTextContent,
-            kind: .text(newTextContent, heightMm: newTextHeight),
+            name: String(newTextContent.prefix(40)),
+            kind: .textBox(text: newTextContent, style: style),
             xMm: 15,
             yMm: page.format.heightMm * 0.45,
-            layerID: layerID
+            widthMm: min(140, page.format.widthMm - 20),
+            heightMm: max(newTextHeight * 4, 36),
+            anchor: .bottomLeft,
+            layerID: layerID,
+            zOrder: (page.elements.map(\.zOrder).max() ?? 0) + 1
         )
         page.elements.append(el)
-        selectedElementID = el.id
+        selectElement(el.id)
+        recomposePage()
+    }
+
+    func addShape(_ kind: PageElement.ShapeKind) {
+        checkpointDocument()
+        let layerID = selectedLayerID ?? page.defaultLayerID
+        let el = PageElement(
+            name: kind.rawValue.capitalized,
+            kind: .shape(kind),
+            xMm: 20,
+            yMm: 20,
+            widthMm: 40,
+            heightMm: kind == .line ? 2 : 30,
+            layerID: layerID,
+            zOrder: (page.elements.map(\.zOrder).max() ?? 0) + 1
+        )
+        page.elements.append(el)
+        selectElement(el.id)
         recomposePage()
     }
 
     func addSVGToPage(url: URL) {
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
+            checkpointDocument()
             let layerID = selectedLayerID ?? page.defaultLayerID
             let el = PageElement(
                 name: url.lastPathComponent,
                 kind: .svg(text),
                 xMm: 10,
                 yMm: 10,
-                layerID: layerID
+                widthMm: 80,
+                heightMm: 60,
+                layerID: layerID,
+                zOrder: (page.elements.map(\.zOrder).max() ?? 0) + 1
             )
             page.elements.append(el)
-            selectedElementID = el.id
+            selectElement(el.id)
             recomposePage()
         } catch {
             lastError = error.localizedDescription
@@ -667,33 +772,238 @@ final class AppModel: ObservableObject {
             lastError = "Draw handwriting first"
             return
         }
+        checkpointDocument()
         let layerID = selectedLayerID ?? page.defaultLayerID
         let el = PageElement(
             name: "Handwriting",
             kind: .ink(inkDocument),
             xMm: 5,
             yMm: 5,
-            layerID: layerID
+            widthMm: 100,
+            heightMm: 60,
+            layerID: layerID,
+            zOrder: (page.elements.map(\.zOrder).max() ?? 0) + 1
         )
         page.elements.append(el)
-        selectedElementID = el.id
+        selectElement(el.id)
         recomposePage()
     }
 
     func duplicateSelectedElement() {
-        guard let id = selectedElementID else { return }
-        page.duplicateElement(id)
+        let ids = selectedElementIDs.isEmpty ? Set([selectedElementID].compactMap { $0 }) : selectedElementIDs
+        guard !ids.isEmpty else { return }
+        checkpointDocument()
+        for id in ids { page.duplicateElement(id) }
         recomposePage()
     }
 
     func deleteSelectedElement() {
-        guard let id = selectedElementID else { return }
-        page.elements.removeAll { $0.id == id }
+        let ids = selectedElementIDs.isEmpty ? Set([selectedElementID].compactMap { $0 }) : selectedElementIDs
+        guard !ids.isEmpty else { return }
+        checkpointDocument()
+        page.elements.removeAll { ids.contains($0.id) }
         selectedElementID = nil
+        selectedElementIDs = []
+        recomposePage()
+    }
+
+    func copySelectedElements() {
+        let ids = selectedElementIDs.isEmpty ? Set([selectedElementID].compactMap { $0 }) : selectedElementIDs
+        clipboardElements = page.elements.filter { ids.contains($0.id) }
+    }
+
+    func pasteClipboardElements() {
+        guard !clipboardElements.isEmpty else { return }
+        checkpointDocument()
+        var newIDs: Set<UUID> = []
+        for el in clipboardElements {
+            var copy = el
+            copy.id = UUID()
+            copy.name = el.name + " copy"
+            copy.xMm += 5
+            copy.yMm += 5
+            copy.zOrder = (page.elements.map(\.zOrder).max() ?? 0) + 1
+            page.elements.append(copy)
+            newIDs.insert(copy.id)
+        }
+        selectedElementIDs = newIDs
+        selectedElementID = newIDs.first
+        recomposePage()
+    }
+
+    func nudgeSelected(dx: Double, dy: Double, disableSnap: Bool = false) {
+        let ids = selectedElementIDs.isEmpty ? Set([selectedElementID].compactMap { $0 }) : selectedElementIDs
+        guard !ids.isEmpty else { return }
+        checkpointDocument()
+        for i in page.elements.indices where ids.contains(page.elements[i].id) && !page.elements[i].locked {
+            var x = page.elements[i].xMm + dx
+            var y = page.elements[i].yMm + dy
+            let snapped = SnapEngine.snapPosition(
+                x: x,
+                y: y,
+                page: page,
+                elementSize: (page.elements[i].widthMm, page.elements[i].heightMm),
+                disableSnap: disableSnap
+            )
+            x = snapped.x
+            y = snapped.y
+            page.elements[i].xMm = x
+            page.elements[i].yMm = y
+        }
+        recomposePage()
+    }
+
+    private var geometryCheckpointTaken = false
+
+    func beginGeometryEdit() {
+        if !geometryCheckpointTaken {
+            checkpointDocument()
+            geometryCheckpointTaken = true
+        }
+    }
+
+    func endGeometryEdit() {
+        geometryCheckpointTaken = false
+    }
+
+    func updateSelectedGeometry(
+        x: Double? = nil,
+        y: Double? = nil,
+        width: Double? = nil,
+        height: Double? = nil,
+        rotation: Double? = nil,
+        scale: Double? = nil,
+        anchor: AnchorPoint? = nil,
+        lockAspect: Bool? = nil,
+        checkpoint: Bool = true
+    ) {
+        guard let id = selectedElementID,
+              let idx = page.elements.firstIndex(where: { $0.id == id }),
+              !page.elements[idx].locked else { return }
+        if checkpoint { beginGeometryEdit() }
+        if let x, let y {
+            LayoutTools.setDisplayPosition(element: &page.elements[idx], page: page, x: x, y: y)
+        } else {
+            if let x { page.elements[idx].xMm = x }
+            if let y { page.elements[idx].yMm = y }
+        }
+        if let width {
+            if page.elements[idx].lockAspect {
+                let ratio = page.elements[idx].heightMm / max(page.elements[idx].widthMm, 0.01)
+                page.elements[idx].widthMm = max(1, width)
+                page.elements[idx].heightMm = max(1, width * ratio)
+            } else {
+                page.elements[idx].widthMm = max(1, width)
+            }
+        }
+        if let height, !(lockAspect ?? page.elements[idx].lockAspect) || width == nil {
+            page.elements[idx].heightMm = max(1, height)
+        }
+        if let rotation { page.elements[idx].rotationDegrees = rotation }
+        if let scale { page.elements[idx].scale = max(0.01, scale) }
+        if let anchor { page.elements[idx].anchor = anchor }
+        if let lockAspect { page.elements[idx].lockAspect = lockAspect }
+        recomposePage()
+    }
+
+    func dragSelected(toPaperX x: Double, y: Double, disableSnap: Bool) {
+        guard let id = selectedElementID,
+              let idx = page.elements.firstIndex(where: { $0.id == id }),
+              !page.elements[idx].locked else { return }
+        let snapped = SnapEngine.snapPosition(
+            x: x,
+            y: y,
+            page: page,
+            elementSize: (page.elements[idx].widthMm, page.elements[idx].heightMm),
+            disableSnap: disableSnap
+        )
+        page.elements[idx].xMm = snapped.x
+        page.elements[idx].yMm = snapped.y
+        recomposePage()
+    }
+
+    func beginDragGesture() {
+        beginGeometryEdit()
+    }
+
+    func centreSelected(horizontal: Bool, vertical: Bool) {
+        guard let id = selectedElementID,
+              let idx = page.elements.firstIndex(where: { $0.id == id }) else { return }
+        checkpointDocument()
+        LayoutTools.centreOnPage(&page.elements[idx], page: page, horizontal: horizontal, vertical: vertical)
+        recomposePage()
+    }
+
+    func alignSelection(horizontal: TextAlignment? = nil, vertical: LayoutTools.VerticalAlign? = nil) {
+        let ids = Array(selectedElementIDs)
+        guard ids.count >= 2 else { return }
+        checkpointDocument()
+        LayoutTools.align(&page.elements, ids: ids, page: page, horizontal: horizontal, vertical: vertical)
+        recomposePage()
+    }
+
+    func distributeSelection(horizontal: Bool) {
+        let ids = Array(selectedElementIDs)
+        guard ids.count >= 3 else { return }
+        checkpointDocument()
+        LayoutTools.distribute(&page.elements, ids: ids, horizontal: horizontal)
+        recomposePage()
+    }
+
+    func reorderSelected(action: (inout [PageElement], UUID) -> Void) {
+        guard let id = selectedElementID else { return }
+        checkpointDocument()
+        action(&page.elements, id)
+        recomposePage()
+    }
+
+    func toggleLockSelected() {
+        guard let id = selectedElementID,
+              let idx = page.elements.firstIndex(where: { $0.id == id }) else { return }
+        checkpointDocument()
+        page.elements[idx].locked.toggle()
+    }
+
+    func toggleHideSelected() {
+        guard let id = selectedElementID,
+              let idx = page.elements.firstIndex(where: { $0.id == id }) else { return }
+        checkpointDocument()
+        page.elements[idx].visible.toggle()
+        recomposePage()
+    }
+
+    func renameSelected(_ name: String) {
+        guard let id = selectedElementID,
+              let idx = page.elements.firstIndex(where: { $0.id == id }) else { return }
+        checkpointDocument()
+        page.elements[idx].name = name
+    }
+
+    private var textEditCheckpointTaken = false
+
+    func beginTextEditing() {
+        if !textEditCheckpointTaken {
+            checkpointDocument()
+            textEditCheckpointTaken = true
+        }
+    }
+
+    func endTextEditing() {
+        textEditCheckpointTaken = false
+    }
+
+    func updateTextBox(text: String? = nil, style: TextBoxStyle? = nil) {
+        guard let id = selectedElementID,
+              let idx = page.elements.firstIndex(where: { $0.id == id }),
+              case .textBox(let current, let currentStyle) = page.elements[idx].kind else { return }
+        beginTextEditing()
+        page.elements[idx].kind = .textBox(text: text ?? current, style: style ?? currentStyle)
+        if let text { page.elements[idx].name = String(text.prefix(40)) }
         recomposePage()
     }
 
     func addPenLayer() {
+        checkpointDocument()
         let n = page.layers.count + 1
         let pens = PenPreset.library
         let pen = pens[(n - 1) % pens.count]
@@ -702,9 +1012,140 @@ final class AppModel: ObservableObject {
         recomposePage()
     }
 
+    func duplicateSelectedLayer() {
+        guard let id = selectedLayerID, let layer = page.layer(for: id) else { return }
+        checkpointDocument()
+        var copy = layer
+        copy.id = UUID()
+        copy.name = layer.name + " copy"
+        copy.order = (page.layers.map(\.order).max() ?? 0) + 1
+        page.layers.append(copy)
+        selectedLayerID = copy.id
+        recomposePage()
+    }
+
+    func saveProject(to url: URL? = nil) {
+        let target = url ?? projectURL
+        let panelURL: URL? = {
+            if let target { return target }
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [UTType(filenameExtension: "quill") ?? .json]
+            panel.nameFieldStringValue = (page.name.isEmpty ? "Untitled" : page.name) + ".quill"
+            return panel.runModal() == .OK ? panel.url : nil
+        }()
+        guard let dest = panelURL else { return }
+        do {
+            var project = currentProject
+            project.touch()
+            try project.save(to: dest)
+            projectURL = dest
+            rememberRecentProject(dest)
+            console.append("--- Saved project \(dest.lastPathComponent) ---")
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func openProject() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "quill") ?? .json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let project = try QuillProject.load(from: url)
+            documentHistory.clear()
+            applyProject(project, recordHistory: false)
+            projectURL = url
+            rememberRecentProject(url)
+            console.append("--- Opened \(url.lastPathComponent) ---")
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func exportComposedSVG() {
+        guard let job = composedPage?.job else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.svg]
+        panel.nameFieldStringValue = "\(page.name).svg"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let svg = svgPreview(from: job)
+        do {
+            try svg.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    private func svgPreview(from job: PlotJob) -> String {
+        var d = ""
+        for cmd in job.commands {
+            switch cmd {
+            case .move(let p): d += "M \(p.x) \(machine.travelY - p.y) "
+            case .line(let p): d += "L \(p.x) \(machine.travelY - p.y) "
+            case .penChange: break
+            }
+        }
+        return """
+        <svg xmlns="http://www.w3.org/2000/svg" width="\(machine.travelX)mm" height="\(machine.travelY)mm" viewBox="0 0 \(machine.travelX) \(machine.travelY)">
+        <path d="\(d)" fill="none" stroke="black" stroke-width="0.3"/>
+        </svg>
+        """
+    }
+
+    private func rememberRecentProject(_ url: URL) {
+        var list = UserDefaults.standard.stringArray(forKey: Self.recentProjectsKey) ?? []
+        list.removeAll { $0 == url.path }
+        list.insert(url.path, at: 0)
+        if list.count > 12 { list = Array(list.prefix(12)) }
+        UserDefaults.standard.set(list, forKey: Self.recentProjectsKey)
+    }
+
+    private func autosaveURL() -> URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let folder = dir.appendingPathComponent("Quill", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent(Self.autosaveName)
+    }
+
+    private func startAutosave() {
+        autosaveTimer?.invalidate()
+        autosaveTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.performAutosave()
+            }
+        }
+    }
+
+    private func performAutosave() {
+        var project = currentProject
+        project.touch()
+        try? project.save(to: autosaveURL())
+    }
+
+    private func recoverAutosaveIfNeeded() {
+        let url = autosaveURL()
+        guard FileManager.default.fileExists(atPath: url.path),
+              let project = try? QuillProject.load(from: url),
+              !project.page.elements.isEmpty else { return }
+        page = project.page
+        batch = project.batch
+        selectedLayerID = page.defaultLayerID
+        console.append("--- Recovered autosave ---")
+    }
+
     func recomposePage() {
         do {
-            let composed = try PageComposer.compose(page, profile: machine, optimize: optimizePaths)
+            var composePage = page
+            if plotOnlySelectedLayer, let lid = selectedLayerID {
+                composePage.layers = composePage.layers.map { layer in
+                    var copy = layer
+                    copy.visible = layer.id == lid
+                    return copy
+                }
+            }
+            let composed = try PageComposer.compose(composePage, profile: machine, optimize: optimizePaths)
             composedPage = composed
             previewJob = composed.job.simplified()
             jobText = composed.gcode
@@ -717,6 +1158,9 @@ final class AppModel: ObservableObject {
                 workZeroKnown: workZeroKnown,
                 isBusy: isBusyBlockingJob
             )
+            if composed.hasBlockingOverflow {
+                lastError = composed.warnings.first ?? "Text overflow — resolve before plotting"
+            }
         } catch {
             composedPage = nil
             // Keep last good preview; surface error.
@@ -726,7 +1170,11 @@ final class AppModel: ObservableObject {
 
     func applyPageToJob() {
         recomposePage()
-        guard composedPage != nil else { return }
+        guard let composed = composedPage else { return }
+        if composed.hasBlockingOverflow, !allowStartDespiteWarnings {
+            lastError = "Resolve text overflow (or allow warnings) before plotting."
+            return
+        }
         mode = .run
     }
 
@@ -750,8 +1198,13 @@ final class AppModel: ObservableObject {
             csvHeaders = parsed.headers
             var map: [UUID: String] = [:]
             for el in page.elements {
-                if case .text(let raw, _) = el.kind, raw.contains("{") {
+                switch el.kind {
+                case .text(let raw, _) where raw.contains("{"):
                     map[el.id] = raw
+                case .textBox(let raw, _) where raw.contains("{"):
+                    map[el.id] = raw
+                default:
+                    break
                 }
             }
             batch = VariableData.makeBatch(
@@ -760,7 +1213,8 @@ final class AppModel: ObservableObject {
                 rows: parsed.rows,
                 pauseBetweenPages: true
             )
-            console.append("--- Batch: \(parsed.rows.count) page(s) from \(url.lastPathComponent) ---")
+            let overflowCount = batch.pages.filter(\.overflows).count
+            console.append("--- Batch: \(parsed.rows.count) page(s) from \(url.lastPathComponent); \(overflowCount) overflow warning(s) ---")
         } catch {
             lastError = error.localizedDescription
         }
