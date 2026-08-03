@@ -1,4 +1,4 @@
-name: TA4Host
+name: Quill
 options:
   bundleIdPrefix: com.cncapp
   deploymentTarget:
@@ -12,28 +12,28 @@ packages:
   CNCCore:
     path: CNCCore
 targets:
-  TA4Host:
+  Quill:
     type: application
     platform: macOS
     sources:
-      - path: TA4Host
+      - path: Quill
         excludes:
           - "*.entitlements"
           - Info.plist
     info:
-      path: TA4Host/Info.plist
+      path: Quill/Info.plist
       properties:
-        CFBundleDisplayName: TA4Host
+        CFBundleDisplayName: Quill
         LSApplicationCategoryType: public.app-category.utilities
     dependencies:
       - package: CNCCore
         product: CNCCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.cncapp.TA4Host
-        PRODUCT_NAME: TA4Host
+        PRODUCT_BUNDLE_IDENTIFIER: com.cncapp.Quill
+        PRODUCT_NAME: Quill
         GENERATE_INFOPLIST_FILE: NO
-        CODE_SIGN_ENTITLEMENTS: TA4Host/TA4Host.entitlements
+        CODE_SIGN_ENTITLEMENTS: Quill/Quill.entitlements
         # Local Debug builds use ad-hoc signing; hardened runtime breaks that.
         ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_IDENTITY: "-"

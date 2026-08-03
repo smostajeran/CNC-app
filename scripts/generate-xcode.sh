@@ -7,5 +7,5 @@ if ! command -v xcodegen >/dev/null 2>&1; then
   exit 1
 fi
 xcodegen generate --spec "$ROOT/project.yml"
-echo "Opened project: $ROOT/TA4Host.xcodeproj"
-echo "Run: open \"$ROOT/TA4Host.xcodeproj\""
+echo "Opened project: $ROOT/Quill.xcodeproj"
+echo "Run: open \"$ROOT/Quill.xcodeproj\""

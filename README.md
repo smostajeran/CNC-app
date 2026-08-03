@@ -1,4 +1,4 @@
-# CNC-app / TA4Host
+# CNC-app / Quill
 
 Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replacement for the outdated Panda / Bachin Draw software.
 
@@ -13,8 +13,8 @@ Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replaceme
 | Path | Role |
 |------|------|
 | `CNCCore/` | Swift package — GRBL, serial, streaming, SVG→G-code, text, normalizer |
-| `TA4Host/` | SwiftUI macOS app |
-| `project.yml` | XcodeGen spec → `TA4Host.xcodeproj` |
+| `Quill/` | SwiftUI macOS app |
+| `project.yml` | XcodeGen spec → `Quill.xcodeproj` |
 | `scripts/probe-grbl.py` | CLI probe for `$I` / `$$` |
 | `scripts/send-gcode.py` | Headless G-code streamer |
 
@@ -24,7 +24,7 @@ Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replaceme
 cd /path/to/CNC-app
 brew install xcodegen   # if needed
 ./scripts/generate-xcode.sh
-open TA4Host.xcodeproj
+open Quill.xcodeproj
 ```
 
 CLI checks / build:
@@ -35,15 +35,15 @@ swift test --package-path CNCCore
 ./scripts/build-mac.sh
 # Or manually:
 xcodegen generate --spec project.yml
-xcodebuild -scheme TA4Host -configuration Debug build
+xcodebuild -scheme Quill -configuration Debug build
 ```
 
-## Inkscape → TA4Host workflow
+## Inkscape → Quill workflow
 
 1. In the app: **Inkscape Template…** (or menu) → save `TA4-workspace.svg` (390×200 mm).
 2. Open the template in Inkscape. Set document units to **mm**. Draw on `Pen1` / `Pen2` layers.
 3. **Path → Object to Path** before saving.
-4. Open the SVG in TA4Host (or drag onto the job pane). Enable **Watch job file** to reload on Save.
+4. Open the SVG in Quill (or drag onto the job pane). Enable **Watch job file** to reload on Save.
 5. Different stroke colors / layers insert an `M0` pen-change pause — swap pens, then **Resume**.
 
 Foreign G-code from Candle / plotter Inkscape extensions that uses `M3`/`M5`/`SM03` is rewritten to motor-Z moves on load.

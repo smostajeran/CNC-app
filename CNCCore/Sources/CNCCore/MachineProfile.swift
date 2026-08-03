@@ -70,7 +70,8 @@ public struct MachineProfile: Equatable, Sendable, Codable {
 
     public static let ta4 = MachineProfile()
 
-    private static let defaultsKey = "ta4host.machineProfile"
+    private static let defaultsKey = "quill.machineProfile"
+    private static let legacyDefaultsKey = "ta4host.machineProfile"
 
     /// Soft floor: hard pressure cannot dig more than 1 mm below `penDownZ`, nor below 0 relative to travel.
     public mutating func clampPressureRange() {
@@ -111,7 +112,8 @@ public struct MachineProfile: Equatable, Sendable, Codable {
     }
 
     public static func loadFromDefaults(_ defaults: UserDefaults = .standard) -> MachineProfile? {
-        guard let data = defaults.data(forKey: defaultsKey) else { return nil }
+        let data = defaults.data(forKey: defaultsKey) ?? defaults.data(forKey: legacyDefaultsKey)
+        guard let data else { return nil }
         var profile = try? JSONDecoder().decode(MachineProfile.self, from: data)
         profile?.clampPressureRange()
         return profile

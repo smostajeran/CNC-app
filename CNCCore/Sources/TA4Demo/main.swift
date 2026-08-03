@@ -1,7 +1,7 @@
 import Foundation
 import CNCCore
 
-print("TA4Host core demo (Linux/macOS CLI)")
+print("Quill core demo (Linux/macOS CLI)")
 print(String(repeating: "=", count: 48))
 
 // 1) Pressure mapping
@@ -78,4 +78,4 @@ while streamer.state == .running && rounds < 500 {
 }
 print("  sent \(sent) lines, state=\(streamer.state), progress=\(String(format: "%.0f%%", streamer.progress * 100))")
 
-print("\nDone. GUI TA4Host.app still requires macOS + Xcode.")
+print("\nDone. GUI Quill.app still requires macOS + Xcode.")

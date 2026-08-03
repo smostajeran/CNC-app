@@ -1,11 +1,11 @@
 import SwiftUI
 
 @main
-struct TA4HostApp: App {
+struct QuillApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("TA4Host") {
+        WindowGroup("Quill") {
             ContentView()
                 .environmentObject(model)
                 .frame(minWidth: 960, minHeight: 640)
@@ -17,6 +17,6 @@ struct TA4HostApp: App {
                 Button("Export Inkscape Template…") { model.exportInkscapeTemplate() }
             }
         }
-        .handlesExternalEvents(matching: ["ta4host"])
+        .handlesExternalEvents(matching: ["quill", "ta4host"])
     }
 }

@@ -4,7 +4,7 @@
 
 **Problem:** Stock host software (“Panda” / Bachin Draw) is outdated and Windows-only.
 
-**v1 — macOS host app (`TA4Host`):** native SwiftUI app that replaces the essential Panda workflow over **USB serial GRBL 1.1**:
+**v1 — macOS host app (`Quill`):** native SwiftUI app that replaces the essential Panda workflow over **USB serial GRBL 1.1**:
 
 - Connect / disconnect, console (`$$`, `$I`)
 - Status, soft-reset, unlock (`$X`), halt
@@ -36,7 +36,7 @@ Sourced from Bachin wiki tips, Apple Support Communities, and GRBL issues:
 ## Integrations
 
 - **Inkscape:** export TA-4 workspace SVG; honor viewBox + translate/scale/matrix; watch open file for Save → reload; layer/stroke colors → pen-change pauses
-- **macOS:** drag-drop, paste, document types, recent jobs, `ta4host://` URL scheme
+- **macOS:** drag-drop, paste, document types, recent jobs, `quill://` URL scheme (also accepts legacy `ta4host://`)
 - **Other CAM/senders:** normalize servo pen G-code from Candle / Inkscape extensions
 - **CLI:** `scripts/probe-grbl.py`, `scripts/send-gcode.py`
 

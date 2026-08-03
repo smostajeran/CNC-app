@@ -48,7 +48,7 @@ public enum SVGToGCode {
 
     public static func gcode(from job: PlotJob, profile: MachineProfile) -> String {
         var lines: [String] = [
-            "; TA4Host SVG / ink job",
+            "; Quill SVG / ink job",
             "G21",
             "G90",
             "G0 Z\(fmt(profile.penUpZ))",

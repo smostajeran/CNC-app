@@ -61,4 +61,4 @@ Host PC / Android  --USB serial G-code-->  ATmega328P Nano + GRBL 1.1f
 
 See [grbl-probe.md](./grbl-probe.md).
 
-In **TA4Host**: Connect → **Probe $$/$I** applies `$130`/`$131`/`$100`… into the session `MachineProfile`. CLI: `python3 scripts/probe-grbl.py`.
+In **Quill**: Connect → **Probe $$/$I** applies `$130`/`$131`/`$100`… into the session `MachineProfile`. CLI: `python3 scripts/probe-grbl.py`.

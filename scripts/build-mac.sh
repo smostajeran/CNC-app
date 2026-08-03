@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build TA4Host on macOS (requires Xcode + XcodeGen).
+# Build Quill on macOS (requires Xcode + XcodeGen).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -17,11 +17,11 @@ xcodegen generate --spec "$ROOT/project.yml"
 LOG="$ROOT/build/xcodebuild.log"
 mkdir -p "$ROOT/build"
 
-echo "==> Build TA4Host (Debug, ad-hoc sign)"
+echo "==> Build Quill (Debug, ad-hoc sign)"
 set +e
 xcodebuild \
-  -project TA4Host.xcodeproj \
-  -scheme TA4Host \
+  -project Quill.xcodeproj \
+  -scheme Quill \
   -configuration Debug \
   -derivedDataPath "$ROOT/build/DerivedData" \
   CODE_SIGN_IDENTITY="-" \
@@ -41,7 +41,7 @@ if [[ "$STATUS" -ne 0 ]]; then
   exit "$STATUS"
 fi
 
-APP="$ROOT/build/DerivedData/Build/Products/Debug/TA4Host.app"
+APP="$ROOT/build/DerivedData/Build/Products/Debug/Quill.app"
 echo ""
 echo "Built: $APP"
 echo "Run:   open \"$APP\""

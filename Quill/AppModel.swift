@@ -36,9 +36,9 @@ final class AppModel: ObservableObject {
     private var fileWatchSource: DispatchSourceFileSystemObject?
     private var fileWatchFD: Int32 = -1
 
-    private static let recentKey = "ta4host.recentJobs"
-    private static let portKey = "ta4host.lastPort"
-    private static let baudKey = "ta4host.lastBaud"
+    private static let recentKey = "quill.recentJobs"
+    private static let portKey = "quill.lastPort"
+    private static let baudKey = "quill.lastBaud"
 
     var isConnected: Bool {
         if case .connected = connectionState { return true }
