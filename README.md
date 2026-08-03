@@ -62,14 +62,24 @@ The TA-4 has no force sensor — pressure is approximated by **motor Z depth** a
 
 SVG paths with varying `stroke-width` also map to pressure when imported. Save ink as `.ta4ink` or export SVG for Inkscape.
 
+## Modes
+
+Quill is organized as **Setup → Create & Position → Run**:
+
+- **Setup:** connect, probe, set zero, axis wizard, pen Z / pressure
+- **Create:** import SVG/G-code (Original size / Fit to bed / Custom), text, ink
+- **Run:** preflight, Frame Job (pen-up boundary), Start / Hold / Resume / Stop
+
+Diagnostics (console) is optional via the toggle in the top bar. Manual console/jog/probe are locked while a job owns the serial port.
+
 ## Axis scale wizard (10 mm = 10 mm)
 
-Sidebar **Calibrate → Axis scale wizard**:
+**Setup → Axis scale wizard…**
 
-1. Put a blank white sheet under the pen; set zero at the start corner.
-2. For X (then Y): mark point 1 → move a known distance (10 / 50 / 100 mm) → mark point 2.
+1. Put a blank white sheet under the pen; set zero at the start corner; **Probe** first.
+2. For X (then Y): mark point 1 → move a known distance (only moves that fit remaining travel) → mark point 2.
 3. Measure between the marks with a ruler and enter the real length.
-4. Quill writes corrected steps/mm to GRBL (`$100` / `$101`) so commanded distance matches paper.
+4. Quill writes `$100`/`$101`, reads them back, and rolls back if verification fails.
 
 Longer spans (50–100 mm) give a more accurate scale; the goal is still 1:1 (10 mm commanded → 10 mm on paper).
 

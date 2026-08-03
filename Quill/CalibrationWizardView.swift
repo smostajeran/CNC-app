@@ -58,7 +58,10 @@ struct CalibrationWizardView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Close") { dismiss() }
+            Button("Close") {
+                model.setCalibrationWizardOpen(false)
+                dismiss()
+            }
                 .keyboardShortcut(.cancelAction)
         }
         .padding(16)
@@ -274,17 +277,22 @@ struct CalibrationWizardView: View {
             Text("Quill will jog a commanded distance \(axis.prompt). Pick a distance you can measure cleanly with a ruler.")
                 .font(.callout)
             Picker("Commanded mm", selection: $commandedMm) {
-                Text("10 mm").tag(10.0)
-                Text("50 mm").tag(50.0)
-                Text("100 mm").tag(100.0)
+                ForEach(allowedMoves, id: \.self) { mm in
+                    Text("\(Int(mm)) mm").tag(mm)
+                }
             }
             .pickerStyle(.segmented)
+            Text(travelHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Button("Move \(Int(commandedMm)) mm on \(axis.shortLabel)") {
                 model.runCalibrationMove(axis: axis, distanceMm: commandedMm)
                 moved = true
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!model.isConnected || !markedStart)
+            .disabled(!model.isConnected || !markedStart || !allowedMoves.contains(commandedMm))
+            .onAppear { clampCommandedToTravel() }
+            .onChange(of: axis) { _ in clampCommandedToTravel() }
             if moved {
                 Text("Carriage moved. Mark point 2 at the new tip position.")
                     .font(.caption)
@@ -436,7 +444,7 @@ struct CalibrationWizardView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 Button("Finish") {
-                    model.showCalibrationWizard = false
+                    model.setCalibrationWizardOpen(false)
                     dismiss()
                 }
             } else {
@@ -507,5 +515,31 @@ struct CalibrationWizardView: View {
         markedEnd = false
         measuredText = ""
         model.calibrationNote = nil
+        clampCommandedToTravel()
+    }
+
+    private var remainingTravelMm: Double {
+        let pos = model.workZeroKnown ? model.status.wpos : model.status.mpos
+        switch axis {
+        case .x: return model.machine.travelX - pos.x
+        case .y: return model.machine.travelY - pos.y
+        }
+    }
+
+    private var allowedMoves: [Double] {
+        [10.0, 50.0, 100.0].filter { $0 <= remainingTravelMm - 1 }
+    }
+
+    private var travelHint: String {
+        if allowedMoves.isEmpty {
+            return String(format: "Only %.1f mm of travel left on %@ — jog back or set zero closer to the start corner.", max(0, remainingTravelMm), axis.shortLabel)
+        }
+        return String(format: "%.0f mm of travel remaining on %@ (moves that would overshoot are hidden).", max(0, remainingTravelMm), axis.shortLabel)
+    }
+
+    private func clampCommandedToTravel() {
+        if !allowedMoves.contains(commandedMm) {
+            commandedMm = allowedMoves.last ?? 10
+        }
     }
 }

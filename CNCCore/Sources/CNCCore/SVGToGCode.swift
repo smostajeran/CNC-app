@@ -3,11 +3,31 @@ import Foundation
 public enum SVGToGCodeError: Error, LocalizedError, Equatable {
     case invalidSVG
     case noPaths
+    case outOfBounds(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidSVG: return "Could not parse SVG"
         case .noPaths: return "SVG contained no drawable paths"
+        case .outOfBounds(let detail): return detail
+        }
+    }
+}
+
+/// How SVG geometry is placed on the machine bed.
+public enum SVGPlacementMode: String, Equatable, Sendable, CaseIterable {
+    /// Keep authored mm size and position (after viewBox origin shift). Reject if out of bed.
+    case originalSize
+    /// Uniform scale to fit bed with margin (legacy default behavior).
+    case fitToBed
+    /// Keep size; translate so bounds sit at `offsetX/Y` (mm). Reject if out of bed.
+    case custom
+
+    public var label: String {
+        switch self {
+        case .originalSize: return "Original size"
+        case .fitToBed: return "Fit to bed"
+        case .custom: return "Custom position"
         }
     }
 }
@@ -19,6 +39,20 @@ public enum SVGToGCode {
         profile: MachineProfile = .ta4,
         fitToWorkspace: Bool = true
     ) throws -> PlotJob {
+        try plotJob(
+            from: svg,
+            profile: profile,
+            placement: fitToWorkspace ? .fitToBed : .originalSize
+        )
+    }
+
+    public static func plotJob(
+        from svg: String,
+        profile: MachineProfile = .ta4,
+        placement: SVGPlacementMode,
+        offsetX: Double = 0,
+        offsetY: Double = 0
+    ) throws -> PlotJob {
         var commands = try extractCommands(from: svg)
         guard !commands.isEmpty else { throw SVGToGCodeError.noPaths }
 
@@ -29,10 +63,15 @@ public enum SVGToGCode {
         }
 
         var job = PlotJob(commands: commands)
-        if fitToWorkspace {
+        switch placement {
+        case .fitToBed:
             job = fit(job, into: profile)
-        } else {
-            job = clip(job, to: profile)
+        case .originalSize:
+            // Preserve authored mm coordinates; do not silently clamp or rescale.
+            try rejectIfOutOfBounds(job, profile: profile)
+        case .custom:
+            job = translate(job, dx: offsetX, dy: offsetY)
+            try rejectIfOutOfBounds(job, profile: profile)
         }
         return job
     }
@@ -43,6 +82,23 @@ public enum SVGToGCode {
         fitToWorkspace: Bool = true
     ) throws -> String {
         let job = try plotJob(from: svg, profile: profile, fitToWorkspace: fitToWorkspace)
+        return gcode(from: job, profile: profile)
+    }
+
+    public static func gcode(
+        from svg: String,
+        profile: MachineProfile = .ta4,
+        placement: SVGPlacementMode,
+        offsetX: Double = 0,
+        offsetY: Double = 0
+    ) throws -> String {
+        let job = try plotJob(
+            from: svg,
+            profile: profile,
+            placement: placement,
+            offsetX: offsetX,
+            offsetY: offsetY
+        )
         return gcode(from: job, profile: profile)
     }
 
@@ -864,6 +920,7 @@ public enum SVGToGCode {
         return PlotPoint(x: x, y: y, pressure: p.pressure)
     }
 
+    /// Legacy clamp — prefer `rejectIfOutOfBounds` for operator safety.
     static func clip(_ job: PlotJob, to profile: MachineProfile) -> PlotJob {
         let commands = job.commands.map { cmd -> PlotCommand in
             switch cmd {
@@ -879,6 +936,33 @@ public enum SVGToGCode {
                     y: clamp(p.y, 0, profile.travelY),
                     pressure: p.pressure
                 ))
+            case .penChange(let label):
+                return .penChange(label)
+            }
+        }
+        return PlotJob(commands: commands)
+    }
+
+    static func rejectIfOutOfBounds(_ job: PlotJob, profile: MachineProfile, epsilon: Double = 0.05) throws {
+        let b = job.bounds
+        if b.minX < -epsilon || b.minY < -epsilon
+            || b.maxX > profile.travelX + epsilon
+            || b.maxY > profile.travelY + epsilon {
+            throw SVGToGCodeError.outOfBounds(String(
+                format: "Drawing %.1f×%.1f mm at (%.1f, %.1f)–(%.1f, %.1f) is outside the %.0f×%.0f mm bed. Use Fit to bed or reposition.",
+                b.width, b.height, b.minX, b.minY, b.maxX, b.maxY,
+                profile.travelX, profile.travelY
+            ))
+        }
+    }
+
+    static func translate(_ job: PlotJob, dx: Double, dy: Double) -> PlotJob {
+        let commands = job.commands.map { cmd -> PlotCommand in
+            switch cmd {
+            case .move(let p):
+                return .move(PlotPoint(x: p.x + dx, y: p.y + dy, pressure: p.pressure))
+            case .line(let p):
+                return .line(PlotPoint(x: p.x + dx, y: p.y + dy, pressure: p.pressure))
             case .penChange(let label):
                 return .penChange(label)
             }

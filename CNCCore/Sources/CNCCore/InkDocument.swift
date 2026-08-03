@@ -39,12 +39,13 @@ public struct InkDocument: Equatable, Sendable, Codable {
         self.strokes = strokes
     }
 
-    public func plotJob() -> PlotJob {
+    public func plotJob(smoothed: Bool = true) -> PlotJob {
         var commands: [PlotCommand] = []
         for stroke in strokes {
-            guard let first = stroke.samples.first else { continue }
+            let samples = smoothed ? InkSmoothing.prepare(stroke.samples) : stroke.samples
+            guard let first = samples.first else { continue }
             commands.append(.move(PlotPoint(x: first.x, y: first.y, pressure: first.pressure)))
-            for sample in stroke.samples.dropFirst() {
+            for sample in samples.dropFirst() {
                 commands.append(.line(PlotPoint(x: sample.x, y: sample.y, pressure: sample.pressure)))
             }
         }
@@ -52,7 +53,7 @@ public struct InkDocument: Equatable, Sendable, Codable {
     }
 
     public func gcode(profile: MachineProfile) -> String {
-        SVGToGCode.gcode(from: plotJob(), profile: profile)
+        SVGToGCode.gcode(from: plotJob(smoothed: true), profile: profile)
     }
 
     public func jsonData() throws -> Data {
@@ -89,6 +90,38 @@ public struct InkDocument: Equatable, Sendable, Codable {
         \(paths.joined(separator: "\n"))
         </svg>
         """
+    }
+}
+
+/// Resample / smooth handwriting to limit Z chatter from pressure noise.
+public enum InkSmoothing {
+    public static let minPointSpacingMm: Double = 0.35
+    public static let pressureAlpha: Double = 0.35
+    public static let minPressureDelta: Double = 0.04
+
+    public static func prepare(_ samples: [InkDocument.Sample]) -> [InkDocument.Sample] {
+        guard samples.count > 2 else { return samples }
+        var out: [InkDocument.Sample] = []
+        out.reserveCapacity(samples.count)
+        var last = samples[0]
+        var smoothP = last.pressure
+        out.append(last)
+        for sample in samples.dropFirst() {
+            let dist = hypot(sample.x - last.x, sample.y - last.y)
+            smoothP = smoothP * (1 - pressureAlpha) + sample.pressure * pressureAlpha
+            let pressureDelta = abs(smoothP - last.pressure)
+            if dist < minPointSpacingMm && pressureDelta < minPressureDelta {
+                continue
+            }
+            let next = InkDocument.Sample(x: sample.x, y: sample.y, pressure: smoothP)
+            out.append(next)
+            last = next
+        }
+        if let final = samples.last, out.last != final {
+            let p = out.last?.pressure ?? final.pressure
+            out.append(InkDocument.Sample(x: final.x, y: final.y, pressure: p))
+        }
+        return out
     }
 }
 

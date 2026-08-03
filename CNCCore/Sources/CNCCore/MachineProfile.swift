@@ -23,8 +23,8 @@ public struct MachineProfile: Equatable, Sendable, Codable {
     public var stepsPerMmZ: Double?
     public var buildInfo: String?
 
-    /// Minimum pressure delta before emitting a new Z word in G-code.
-    public static let pressureEpsilon: Double = 0.05
+    /// Minimum pressure delta before emitting a new Z word in G-code (limits Z chatter).
+    public static let pressureEpsilon: Double = 0.08
 
     public init(
         name: String = "TA-4",
