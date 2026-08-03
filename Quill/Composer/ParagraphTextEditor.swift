@@ -92,7 +92,14 @@ struct ParagraphTextEditor: View {
                     .foregroundStyle(.secondary)
             }
 
-            TextEditor(text: $expandDraft)
+            TextEditor(text: Binding(
+                get: { expandDraft },
+                set: { newValue in
+                    expandDraft = newValue
+                    // Keep the page preview / overflow / auto-height in sync while expanded.
+                    text = newValue
+                }
+            ))
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .padding(8)
@@ -110,6 +117,7 @@ struct ParagraphTextEditor: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") {
+                    expandDraft = expandSnapshot
                     text = expandSnapshot
                     showExpanded = false
                     onExpandCancelled?()

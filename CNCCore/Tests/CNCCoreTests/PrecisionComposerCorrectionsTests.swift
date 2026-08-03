@@ -274,9 +274,15 @@ final class PrecisionComposerCorrectionsTests: XCTestCase {
         page.applyTextBoxSizing()
         let data = try QuillProject(page: page).jsonData()
         let loaded = try QuillProject.load(from: data)
+        let expectedLineCount = paragraph.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count
+        XCTAssertEqual(expectedLineCount, 7, "sample letter should keep blank paragraph breaks")
         if case .textBox(let text, _) = loaded.page.elements[0].kind {
             XCTAssertEqual(text, paragraph)
-            XCTAssertEqual(text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count, 8)
+            XCTAssertEqual(
+                text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count,
+                expectedLineCount
+            )
+            XCTAssertTrue(text.contains("\n\n"), "blank paragraph breaks must survive .quill round-trip")
         } else {
             XCTFail("expected textBox")
         }
