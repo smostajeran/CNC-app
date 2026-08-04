@@ -1,6 +1,9 @@
 import Foundation
 
 /// Drives a `GCodeStreamer` through a `CommandCoordinator` (exclusive serial ownership).
+///
+/// Streamer mutations and `pump()` always run on `queue` so the main thread (UI /
+/// start/pause/cancel) cannot race the timer / serial-response path.
 public final class JobRunner: @unchecked Sendable {
     public let streamer = GCodeStreamer()
     private weak var coordinator: CommandCoordinator?
@@ -38,49 +41,59 @@ public final class JobRunner: @unchecked Sendable {
     }
 
     public func loadGCode(_ text: String) {
-        streamer.load(text: text)
-        emit(force: true)
+        queue.sync {
+            streamer.load(text: text)
+            emit(force: true)
+        }
     }
 
     public func start() throws {
         if let coordinator {
             try coordinator.beginStreaming()
         }
-        streamer.start()
-        emit(force: true)
-        startPump()
-        pump()
+        queue.sync {
+            streamer.start()
+            emit(force: true)
+            startPump()
+            pump()
+        }
     }
 
     public func pause() {
-        streamer.pause()
-        try? feedHold()
-        emit(force: true)
-    }
-
-    public func resume() {
-        do {
-            if streamer.state == .waitingForPenChange, let coordinator {
-                try coordinator.resumeStreamingAfterPenChange()
-            }
-            streamer.resume()
-            if streamer.state != .waitingForPenChange {
-                try cycleStart()
-            }
-            emit(force: true)
-            pump()
-        } catch {
-            streamer.handleResponse("error:resume_blocked")
+        queue.sync {
+            streamer.pause()
+            try? feedHold()
             emit(force: true)
         }
     }
 
+    public func resume() {
+        queue.sync {
+            do {
+                if streamer.state == .waitingForPenChange, let coordinator {
+                    try coordinator.resumeStreamingAfterPenChange()
+                }
+                streamer.resume()
+                if streamer.state != .waitingForPenChange {
+                    try cycleStart()
+                }
+                emit(force: true)
+                pump()
+            } catch {
+                streamer.handleResponse("error:resume_blocked")
+                emit(force: true)
+            }
+        }
+    }
+
     public func cancel() {
-        streamer.cancel()
-        try? halt()
-        coordinator?.endStreaming()
-        stopPump()
-        emit(force: true)
+        queue.sync {
+            streamer.cancel()
+            try? halt()
+            coordinator?.endStreaming()
+            stopPump()
+            emit(force: true)
+        }
     }
 
     /// Call when a status report shows Idle (finalizes ack-complete jobs).
@@ -104,7 +117,20 @@ public final class JobRunner: @unchecked Sendable {
         streamer.handleResponse(line)
         if streamer.state == .waitingForPenChange, previous != .waitingForPenChange {
             try? coordinator?.enterPenChangeWait()
-            onPenChange?()
+            // Pen-change UI callback — hop to main so SwiftUI updates are safe.
+            let callback = onPenChange
+            DispatchQueue.main.async { callback?() }
+        }
+        // Status reports also arrive on the line stream — finalize Idle-gated completion
+        // even when AppModel has not wired `noteStatus`.
+        if let status = GRBLStatus.parse(line),
+           streamer.awaitingIdleForCompletion,
+           status.state.lowercased().contains("idle") {
+            streamer.noteMachineIdle()
+            if streamer.state == .completed {
+                coordinator?.endStreaming()
+                stopPump()
+            }
         }
         emit(force: true)
         pump()
@@ -170,8 +196,14 @@ public final class JobRunner: @unchecked Sendable {
         if streamer.awaitingIdleForCompletion {
             progress = min(progress, 0.99)
         }
-        onProgress?(progress, streamer.state)
-        onState?(streamer.state)
+        let state = streamer.state
+        let progressHandler = onProgress
+        let stateHandler = onState
+        // Always deliver UI callbacks on the main queue.
+        DispatchQueue.main.async {
+            progressHandler?(progress, state)
+            stateHandler?(state)
+        }
     }
 
     private func feedHold() throws {

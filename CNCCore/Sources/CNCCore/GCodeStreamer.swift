@@ -11,148 +11,206 @@ public enum StreamerState: Equatable, Sendable {
 }
 
 /// GRBL character-window streamer with host-side M0 pen-change pause.
+///
+/// All mutable state is guarded by `lock` so UI (main) and `JobRunner`’s serial
+/// queue can touch the streamer without racing Array storage.
 public final class GCodeStreamer: @unchecked Sendable {
     /// GRBL default serial RX buffer size.
     public static let rxBufferSize = 127
 
-    public private(set) var lines: [String] = []
-    /// Next line index to send.
-    public private(set) var index: Int = 0
-    /// Lines whose `ok` has been received.
-    public private(set) var ackedCount: Int = 0
-    public private(set) var state: StreamerState = .idle
-    public private(set) var awaitingOk: Bool = false
-    public private(set) var bytesInFlight: Int = 0
-    /// True after M0 has been sent and acked; cleared on resume.
-    public private(set) var penChangePending: Bool = false
+    private let lock = NSLock()
 
-    /// Byte costs (line UTF-8 length + newline) for each in-flight line awaiting `ok`.
-    private var inFlightCosts: [Int] = []
-    /// Whether the next in-flight `ok` completes an M0 pause.
-    private var inFlightIsPenChange: [Bool] = []
+    private var _lines: [String] = []
+    private var _index: Int = 0
+    private var _ackedCount: Int = 0
+    private var _state: StreamerState = .idle
+    private var _awaitingOk: Bool = false
+    private var _bytesInFlight: Int = 0
+    private var _penChangePending: Bool = false
+    private var _inFlightCosts: [Int] = []
+    private var _inFlightIsPenChange: [Bool] = []
+    private var _requireIdleForCompletion: Bool = true
+    private var _awaitingIdleForCompletion: Bool = false
+
+    public var lines: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return _lines
+    }
+
+    public var index: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _index
+    }
+
+    public var ackedCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _ackedCount
+    }
+
+    public var state: StreamerState {
+        lock.lock(); defer { lock.unlock() }
+        return _state
+    }
+
+    public var awaitingOk: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _awaitingOk
+    }
+
+    public var bytesInFlight: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _bytesInFlight
+    }
+
+    public var penChangePending: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _penChangePending
+    }
+
     /// When all lines are acked, wait for Idle before `.completed` if requested.
-    public var requireIdleForCompletion: Bool = true
-    public private(set) var awaitingIdleForCompletion: Bool = false
+    public var requireIdleForCompletion: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _requireIdleForCompletion }
+        set { lock.lock(); defer { lock.unlock() }; _requireIdleForCompletion = newValue }
+    }
+
+    public var awaitingIdleForCompletion: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _awaitingIdleForCompletion
+    }
 
     /// Progress from acknowledged lines (not merely queued).
     public var progress: Double {
-        guard !lines.isEmpty else { return 0 }
-        return min(Double(ackedCount) / Double(lines.count), 1)
+        lock.lock(); defer { lock.unlock() }
+        guard !_lines.isEmpty else { return 0 }
+        return min(Double(_ackedCount) / Double(_lines.count), 1)
     }
 
     public var currentLine: String? {
-        guard index < lines.count else { return nil }
-        return lines[index]
+        lock.lock(); defer { lock.unlock() }
+        guard _index < _lines.count else { return nil }
+        return _lines[_index]
     }
 
-    public var inFlightCount: Int { inFlightCosts.count }
+    public var inFlightCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _inFlightCosts.count
+    }
 
     public init() {}
 
     public func load(text: String) {
-        lines = Self.normalize(text)
-        resetCounters()
-        state = .idle
+        lock.lock(); defer { lock.unlock() }
+        _lines = Self.normalize(text)
+        resetCountersUnlocked()
+        _state = .idle
     }
 
     public func load(lines input: [String]) {
-        lines = input
+        lock.lock(); defer { lock.unlock() }
+        _lines = input
             .map { Self.sanitizeLine($0) }
             .filter { !$0.isEmpty }
-        resetCounters()
-        state = .idle
+        resetCountersUnlocked()
+        _state = .idle
     }
 
     public func start() {
-        guard !lines.isEmpty else {
-            state = .completed
+        lock.lock(); defer { lock.unlock() }
+        guard !_lines.isEmpty else {
+            _state = .completed
             return
         }
-        if case .paused = state {
-            state = .running
+        if case .paused = _state {
+            _state = .running
             return
         }
-        if case .waitingForPenChange = state {
+        if case .waitingForPenChange = _state {
             return
         }
-        resetCounters()
-        state = .running
+        resetCountersUnlocked()
+        _state = .running
     }
 
     public func pause() {
-        if state == .running { state = .paused }
+        lock.lock(); defer { lock.unlock() }
+        if _state == .running { _state = .paused }
     }
 
     public func resume() {
-        if state == .paused {
-            state = .running
+        lock.lock(); defer { lock.unlock() }
+        if _state == .paused {
+            _state = .running
             return
         }
-        if state == .waitingForPenChange {
-            penChangePending = false
-            state = .running
+        if _state == .waitingForPenChange {
+            _penChangePending = false
+            _state = .running
         }
     }
 
     public func cancel() {
-        state = .cancelled
-        awaitingOk = false
-        penChangePending = false
-        awaitingIdleForCompletion = false
-        inFlightCosts.removeAll()
-        inFlightIsPenChange.removeAll()
-        bytesInFlight = 0
+        lock.lock(); defer { lock.unlock() }
+        _state = .cancelled
+        _awaitingOk = false
+        _penChangePending = false
+        _awaitingIdleForCompletion = false
+        _inFlightCosts.removeAll()
+        _inFlightIsPenChange.removeAll()
+        _bytesInFlight = 0
     }
 
     public func reset() {
-        resetCounters()
-        state = .idle
+        lock.lock(); defer { lock.unlock() }
+        resetCountersUnlocked()
+        _state = .idle
     }
 
     /// Notify that GRBL reported Idle (used to finalize completion).
     public func noteMachineIdle() {
-        guard awaitingIdleForCompletion else { return }
-        awaitingIdleForCompletion = false
-        if ackedCount >= lines.count && inFlightCosts.isEmpty {
-            state = .completed
+        lock.lock(); defer { lock.unlock() }
+        guard _awaitingIdleForCompletion else { return }
+        _awaitingIdleForCompletion = false
+        if _ackedCount >= _lines.count && _inFlightCosts.isEmpty {
+            _state = .completed
         }
     }
 
     /// Returns the next line if it fits in the remaining RX buffer window.
     /// Host-side M0: drains in-flight lines first, sends M0 alone, then waits for Resume.
     public func nextLineToSend() -> String? {
-        guard state == .running else { return nil }
-        guard index < lines.count else {
-            maybeFinishSending()
+        lock.lock(); defer { lock.unlock() }
+        guard _state == .running else { return nil }
+        guard _index < _lines.count else {
+            maybeFinishSendingUnlocked()
             return nil
         }
 
-        let line = lines[index]
+        let line = _lines[_index]
         let isPen = GCodeParser.isPenChange(line.uppercased())
 
         // Never queue motion behind an in-flight or host-paused pen change.
-        if penChangePending || inFlightIsPenChange.contains(true) { return nil }
+        if _penChangePending || _inFlightIsPenChange.contains(true) { return nil }
 
         if isPen {
             // Drain planner buffer before sending M0 so motion finishes first.
-            guard inFlightCosts.isEmpty else { return nil }
-            index += 1
+            guard _inFlightCosts.isEmpty else { return nil }
+            _index += 1
             let cost = Self.byteCost(line)
-            bytesInFlight += cost
-            inFlightCosts.append(cost)
-            inFlightIsPenChange.append(true)
-            awaitingOk = true
+            _bytesInFlight += cost
+            _inFlightCosts.append(cost)
+            _inFlightIsPenChange.append(true)
+            _awaitingOk = true
             return line
         }
 
         let cost = Self.byteCost(line)
-        guard bytesInFlight + cost <= Self.rxBufferSize else { return nil }
+        guard _bytesInFlight + cost <= Self.rxBufferSize else { return nil }
 
-        index += 1
-        bytesInFlight += cost
-        inFlightCosts.append(cost)
-        inFlightIsPenChange.append(false)
-        awaitingOk = true
+        _index += 1
+        _bytesInFlight += cost
+        _inFlightCosts.append(cost)
+        _inFlightIsPenChange.append(false)
+        _awaitingOk = true
         return line
     }
 
@@ -161,33 +219,35 @@ public final class GCodeStreamer: @unchecked Sendable {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        lock.lock(); defer { lock.unlock() }
+
         if trimmed.hasPrefix("error") || trimmed.hasPrefix("ALARM") {
-            state = .fault(trimmed)
-            awaitingOk = false
-            penChangePending = false
-            awaitingIdleForCompletion = false
-            inFlightCosts.removeAll()
-            inFlightIsPenChange.removeAll()
-            bytesInFlight = 0
+            _state = .fault(trimmed)
+            _awaitingOk = false
+            _penChangePending = false
+            _awaitingIdleForCompletion = false
+            _inFlightCosts.removeAll()
+            _inFlightIsPenChange.removeAll()
+            _bytesInFlight = 0
             return
         }
 
         if trimmed == "ok" {
-            guard !inFlightCosts.isEmpty else { return }
-            let cost = inFlightCosts.removeFirst()
-            let wasPen = inFlightIsPenChange.isEmpty ? false : inFlightIsPenChange.removeFirst()
-            bytesInFlight = max(0, bytesInFlight - cost)
-            ackedCount += 1
-            awaitingOk = !inFlightCosts.isEmpty
+            guard !_inFlightCosts.isEmpty else { return }
+            let cost = _inFlightCosts.removeFirst()
+            let wasPen = _inFlightIsPenChange.isEmpty ? false : _inFlightIsPenChange.removeFirst()
+            _bytesInFlight = max(0, _bytesInFlight - cost)
+            _ackedCount += 1
+            _awaitingOk = !_inFlightCosts.isEmpty
 
             if wasPen {
-                penChangePending = true
-                state = .waitingForPenChange
+                _penChangePending = true
+                _state = .waitingForPenChange
                 return
             }
 
-            if index >= lines.count && inFlightCosts.isEmpty {
-                maybeFinishSending()
+            if _index >= _lines.count && _inFlightCosts.isEmpty {
+                maybeFinishSendingUnlocked()
             }
         }
     }
@@ -212,24 +272,24 @@ public final class GCodeStreamer: @unchecked Sendable {
         line.utf8.count + 1 // trailing newline
     }
 
-    private func maybeFinishSending() {
-        guard inFlightCosts.isEmpty, ackedCount >= lines.count else { return }
-        if requireIdleForCompletion {
-            awaitingIdleForCompletion = true
+    private func maybeFinishSendingUnlocked() {
+        guard _inFlightCosts.isEmpty, _ackedCount >= _lines.count else { return }
+        if _requireIdleForCompletion {
+            _awaitingIdleForCompletion = true
             // Stay `.running` until Idle; UI can show ~99% until then.
         } else {
-            state = .completed
+            _state = .completed
         }
     }
 
-    private func resetCounters() {
-        index = 0
-        ackedCount = 0
-        awaitingOk = false
-        penChangePending = false
-        awaitingIdleForCompletion = false
-        bytesInFlight = 0
-        inFlightCosts.removeAll()
-        inFlightIsPenChange.removeAll()
+    private func resetCountersUnlocked() {
+        _index = 0
+        _ackedCount = 0
+        _awaitingOk = false
+        _penChangePending = false
+        _awaitingIdleForCompletion = false
+        _bytesInFlight = 0
+        _inFlightCosts.removeAll()
+        _inFlightIsPenChange.removeAll()
     }
 }
