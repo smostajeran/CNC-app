@@ -19,11 +19,16 @@ struct TextBoxEditor: View {
                 text: $draftText,
                 placeholder: "Type or paste a letter, address or paragraph…",
                 onExpandCommitted: {
-                    onChange(draftText, draftStyle)
+                    // Text already synced through the binding; close the undo transaction here
+                    // so the next edit starts a fresh step (not only when the inspector disappears).
+                    onEditingEnded()
                 },
                 onExpandCancelled: {
-                    // Binding already restored snapshot inside ParagraphTextEditor.
-                    onChange(draftText, draftStyle)
+                    // Snapshot restore already flowed through $draftText → onChange above.
+                    onEditingEnded()
+                },
+                onTextFocusLost: {
+                    onEditingEnded()
                 }
             )
             .onChange(of: draftText) { _ in

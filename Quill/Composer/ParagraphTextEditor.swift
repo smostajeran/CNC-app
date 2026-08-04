@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 
 /// Multiline paragraph editor sized for letters and long copy.
-/// Return inserts a newline; Command–Return invokes `onCommandReturn` when provided.
+/// Return inserts a newline; Command–Return invokes `onCommandReturn` when provided
+/// (single mechanism — do not also attach ⌘↩ to a sibling button).
 struct ParagraphTextEditor: View {
     let label: String
     @Binding var text: String
@@ -15,10 +16,13 @@ struct ParagraphTextEditor: View {
     var onExpandCommitted: (() -> Void)? = nil
     /// Called when expand Cancel restores the pre-expand snapshot.
     var onExpandCancelled: (() -> Void)? = nil
+    /// Called when the inline paragraph editor resigns focus.
+    var onTextFocusLost: (() -> Void)? = nil
 
     @State private var showExpanded = false
     @State private var expandDraft = ""
     @State private var expandSnapshot = ""
+    @FocusState private var isEditorFocused: Bool
 
     private var characterCount: Int { text.count }
     private var lineCount: Int {
@@ -54,6 +58,7 @@ struct ParagraphTextEditor: View {
                         RoundedRectangle(cornerRadius: 8)
                             .strokeBorder(Color.secondary.opacity(0.28), lineWidth: 1)
                     )
+                    .focused($isEditorFocused)
 
                 if text.isEmpty {
                     Text(placeholder)
@@ -73,9 +78,15 @@ struct ParagraphTextEditor: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .background(CommandReturnCatcher(enabled: onCommandReturn != nil, action: {
-            onCommandReturn?()
-        }))
+        .background(CommandReturnCatcher(
+            enabled: onCommandReturn != nil && isEditorFocused && !showExpanded,
+            action: { onCommandReturn?() }
+        ))
+        .onChange(of: isEditorFocused) { focused in
+            if !focused {
+                onTextFocusLost?()
+            }
+        }
         .sheet(isPresented: $showExpanded) {
             expandedSheet
         }
@@ -142,7 +153,8 @@ struct ParagraphTextEditor: View {
     }
 }
 
-/// Invisible helper that fires when ⌘↩ is pressed while this subtree is in the key window.
+/// Invisible helper that fires when ⌘↩ is pressed while this editor is focused.
+/// Sole Command–Return mechanism for adding a paragraph — do not pair with a Button shortcut.
 private struct CommandReturnCatcher: NSViewRepresentable {
     var enabled: Bool
     var action: () -> Void

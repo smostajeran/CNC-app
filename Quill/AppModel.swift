@@ -799,12 +799,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Prevents re-entrant double insertion if ⌘↩ is delivered more than once.
+    private var isAddingTextElement = false
+
     func addTextElement() {
+        guard !isAddingTextElement else { return }
         let content = newTextContent
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             lastError = "Enter paragraph text before adding"
             return
         }
+        isAddingTextElement = true
+        defer { isAddingTextElement = false }
+
         checkpointDocument()
         let layerID = selectedLayerID ?? page.defaultLayerID
         var style = TextBoxStyle(fontSizeMm: newTextHeight, heightMode: .automatic)
@@ -1115,7 +1122,9 @@ final class AppModel: ObservableObject {
     }
 
     func endTextEditing() {
-        guard textEditCheckpointTaken || documentHistory.isTransactionOpen else { return }
+        // Only close a transaction that beginTextEditing opened — never an unrelated
+        // geometry/rename transaction that happens to be open.
+        guard textEditCheckpointTaken else { return }
         page.applyTextBoxSizing()
         endEditTransaction()
         textEditCheckpointTaken = false

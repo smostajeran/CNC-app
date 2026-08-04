@@ -150,9 +150,10 @@ struct PageComposerView: View {
                 HStack {
                     TextField("Size mm", value: $model.newTextHeight, format: .number)
                         .frame(width: 64)
+                    // ⌘↩ is handled only by ParagraphTextEditor’s CommandReturnCatcher
+                    // so the key equivalent cannot double-insert.
                     Button("Add Paragraph") { model.addTextElement() }
                         .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.return, modifiers: .command)
                 }
                 HStack {
                     Button("Add SVG…") { openSVG() }
