@@ -394,47 +394,56 @@ struct PageComposerView: View {
         let page = model.page
         let px = ox + page.bedOriginX * scale
         let py = oy + (bedH - page.bedOriginY - page.format.heightMm) * scale
-        let margin = page.editor.marginMm * scale
 
-        // Paper (machine Y-up → view Y-down)
-        ZStack {
+        paperSheet(page: page, px: px, py: py, scale: scale)
+        if page.editor.showGrid {
+            paperGrid(page: page, px: px, py: py, scale: scale)
+        }
+        guideOverlay(page: page, px: px, py: py, scale: scale)
+        elementSelectionFrames(page: page, ox: ox, oy: oy, scale: scale, bedH: bedH)
+        if let job = model.previewJob {
+            plotPreviewPaths(job: job, ox: ox, oy: oy, scale: scale, bedH: bedH)
+        }
+    }
+
+    private func paperSheet(page: PageDocument, px: CGFloat, py: CGFloat, scale: CGFloat) -> some View {
+        let margin = page.editor.marginMm * scale
+        let paperW = page.format.widthMm * scale
+        let paperH = page.format.heightMm * scale
+        return ZStack {
             Rectangle()
                 .fill(Color.white)
-                .frame(width: page.format.widthMm * scale, height: page.format.heightMm * scale)
+                .frame(width: paperW, height: paperH)
                 .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
                 .overlay(Rectangle().strokeBorder(Color.accentColor.opacity(0.5), lineWidth: 1.5))
             Rectangle()
                 .strokeBorder(Color.orange.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                .frame(
-                    width: max(page.format.widthMm * scale - margin * 2, 1),
-                    height: max(page.format.heightMm * scale - margin * 2, 1)
-                )
+                .frame(width: max(paperW - margin * 2, 1), height: max(paperH - margin * 2, 1))
         }
-        .position(
-            x: px + page.format.widthMm * scale / 2,
-            y: py + page.format.heightMm * scale / 2
-        )
+        .position(x: px + paperW / 2, y: py + paperH / 2)
+    }
 
-        if page.editor.showGrid {
-            Path { path in
-                var x = 0.0
-                while x <= page.format.widthMm + 0.01 {
-                    let sx = px + x * scale
-                    path.move(to: CGPoint(x: sx, y: py))
-                    path.addLine(to: CGPoint(x: sx, y: py + page.format.heightMm * scale))
-                    x += page.editor.gridSpacingMm
-                }
-                var y = 0.0
-                while y <= page.format.heightMm + 0.01 {
-                    let sy = py + (page.format.heightMm - y) * scale
-                    path.move(to: CGPoint(x: px, y: sy))
-                    path.addLine(to: CGPoint(x: px + page.format.widthMm * scale, y: sy))
-                    y += page.editor.gridSpacingMm
-                }
+    private func paperGrid(page: PageDocument, px: CGFloat, py: CGFloat, scale: CGFloat) -> some View {
+        Path { path in
+            var x = 0.0
+            while x <= page.format.widthMm + 0.01 {
+                let sx = px + x * scale
+                path.move(to: CGPoint(x: sx, y: py))
+                path.addLine(to: CGPoint(x: sx, y: py + page.format.heightMm * scale))
+                x += page.editor.gridSpacingMm
             }
-            .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
+            var y = 0.0
+            while y <= page.format.heightMm + 0.01 {
+                let sy = py + (page.format.heightMm - y) * scale
+                path.move(to: CGPoint(x: px, y: sy))
+                path.addLine(to: CGPoint(x: px + page.format.widthMm * scale, y: sy))
+                y += page.editor.gridSpacingMm
+            }
         }
+        .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
+    }
 
+    private func guideOverlay(page: PageDocument, px: CGFloat, py: CGFloat, scale: CGFloat) -> some View {
         ForEach(page.editor.guides) { guide in
             Path { path in
                 switch guide.orientation {
@@ -450,70 +459,108 @@ struct PageComposerView: View {
             }
             .stroke(Color.cyan.opacity(0.65), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
         }
+    }
 
-        // Selection frames (no SwiftUI rotationEffect — preview paths carry true orientation)
+    /// Selection frames only — kept separate so Xcode 26 can type-check the canvas.
+    private func elementSelectionFrames(
+        page: PageDocument,
+        ox: CGFloat,
+        oy: CGFloat,
+        scale: CGFloat,
+        bedH: Double
+    ) -> some View {
         ForEach(page.elements.filter(\.visible)) { el in
-            let origin = el.frameOriginPaper
-            let x = ox + (page.bedOriginX + origin.x) * scale
-            let y = oy + (bedH - (page.bedOriginY + origin.y + el.heightMm * el.scale)) * scale
-            let selected = model.selectedElementIDs.contains(el.id) || model.selectedElementID == el.id
-            Rectangle()
-                .strokeBorder(selected ? Color.accentColor : Color.black.opacity(0.2), lineWidth: selected ? 1.5 : 0.8)
-                .background(Color.accentColor.opacity(selected ? 0.06 : 0.0))
-                .frame(
-                    width: max(el.widthMm * el.scale * scale, 4),
-                    height: max(el.heightMm * el.scale * scale, 4)
-                )
-                .position(
-                    x: x + el.widthMm * el.scale * scale / 2,
-                    y: y + el.heightMm * el.scale * scale / 2
-                )
-                .onTapGesture {
-                    model.selectElement(el.id, additive: NSEvent.modifierFlags.contains(.shift))
-                }
+            elementFrame(el, page: page, ox: ox, oy: oy, scale: scale, bedH: bedH)
         }
+    }
 
-        if let job = model.previewJob {
-            if showTravelPaths {
-                Path { path in
-                    var last: CGPoint?
-                    for cmd in job.commands {
-                        switch cmd {
-                        case .move(let p):
-                            let pt = CGPoint(x: ox + p.x * scale, y: oy + (bedH - p.y) * scale)
-                            if let last {
-                                path.move(to: last)
-                                path.addLine(to: pt)
-                            }
-                            last = pt
-                        case .line(let p):
-                            last = CGPoint(x: ox + p.x * scale, y: oy + (bedH - p.y) * scale)
-                        case .penChange:
-                            last = nil
-                        }
-                    }
-                }
+    private func elementFrame(
+        _ el: PageElement,
+        page: PageDocument,
+        ox: CGFloat,
+        oy: CGFloat,
+        scale: CGFloat,
+        bedH: Double
+    ) -> some View {
+        let origin = el.frameOriginPaper
+        let frameW = max(el.widthMm * el.scale * scale, 4)
+        let frameH = max(el.heightMm * el.scale * scale, 4)
+        let x = ox + (page.bedOriginX + origin.x) * scale
+        let y = oy + (bedH - (page.bedOriginY + origin.y + el.heightMm * el.scale)) * scale
+        let selected = model.selectedElementIDs.contains(el.id) || model.selectedElementID == el.id
+        let border = selected ? Color.accentColor : Color.black.opacity(0.2)
+        let lineWidth: CGFloat = selected ? 1.5 : 0.8
+        let fillOpacity = selected ? 0.06 : 0.0
+
+        return Rectangle()
+            .strokeBorder(border, lineWidth: lineWidth)
+            .background(Color.accentColor.opacity(fillOpacity))
+            .frame(width: frameW, height: frameH)
+            .position(x: x + frameW / 2, y: y + frameH / 2)
+            .onTapGesture {
+                model.selectElement(el.id, additive: NSEvent.modifierFlags.contains(.shift))
+            }
+    }
+
+    @ViewBuilder
+    private func plotPreviewPaths(
+        job: PlotJob,
+        ox: CGFloat,
+        oy: CGFloat,
+        scale: CGFloat,
+        bedH: Double
+    ) -> some View {
+        if showTravelPaths {
+            travelPath(job: job, ox: ox, oy: oy, scale: scale, bedH: bedH)
                 .stroke(Color.yellow.opacity(0.35), style: StrokeStyle(lineWidth: 0.8, dash: [4, 3]))
-            }
-            Path { path in
-                var started = false
-                for cmd in job.commands {
-                    switch cmd {
-                    case .move(let p):
-                        let pt = CGPoint(x: ox + p.x * scale, y: oy + (bedH - p.y) * scale)
-                        path.move(to: pt)
-                        started = true
-                    case .line(let p):
-                        let pt = CGPoint(x: ox + p.x * scale, y: oy + (bedH - p.y) * scale)
-                        if started { path.addLine(to: pt) }
-                        else { path.move(to: pt); started = true }
-                    case .penChange:
-                        started = false
-                    }
-                }
-            }
-            .stroke(Color.accentColor, lineWidth: 1.2)
         }
+        drawPath(job: job, ox: ox, oy: oy, scale: scale, bedH: bedH)
+            .stroke(Color.accentColor, lineWidth: 1.2)
+    }
+
+    private func travelPath(job: PlotJob, ox: CGFloat, oy: CGFloat, scale: CGFloat, bedH: Double) -> Path {
+        var path = Path()
+        var last: CGPoint?
+        for cmd in job.commands {
+            switch cmd {
+            case .move(let p):
+                let pt = CGPoint(x: ox + p.x * scale, y: oy + (bedH - p.y) * scale)
+                if let last {
+                    path.move(to: last)
+                    path.addLine(to: pt)
+                }
+                last = pt
+            case .line(let p):
+                last = CGPoint(x: ox + p.x * scale, y: oy + (bedH - p.y) * scale)
+            case .penChange:
+                last = nil
+            }
+        }
+        return path
+    }
+
+    private func drawPath(job: PlotJob, ox: CGFloat, oy: CGFloat, scale: CGFloat, bedH: Double) -> Path {
+        var path = Path()
+        var started = false
+        for cmd in job.commands {
+            switch cmd {
+            case .move(let p):
+                let pt = CGPoint(x: ox + p.x * scale, y: oy + (bedH - p.y) * scale)
+                path.move(to: pt)
+                started = true
+            case .line(let p):
+                let pt = CGPoint(x: ox + p.x * scale, y: oy + (bedH - p.y) * scale)
+                if started {
+                    path.addLine(to: pt)
+                } else {
+                    path.move(to: pt)
+                    started = true
+                }
+            case .penChange:
+                started = false
+            }
+        }
+        return path
     }
 
     private func dragGesture(ox: CGFloat, oy: CGFloat, scale: CGFloat, bedH: Double) -> some Gesture {
