@@ -57,9 +57,11 @@ final class JobPreflightTests: XCTestCase {
     }
 
     func testCommandCoordinatorBlocksManualWhileStreaming() throws {
-        let transport = MockTransport()
+        // Kept as a smoke check; fuller coverage lives in CommandCoordinatorTests.
+        let transport = GRBLSimulator()
         let client = GRBLClient(transport: transport)
-        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        client.timingScale = 0
+        try client.connect(path: "/dev/sim", baudRate: 115_200)
         let coord = CommandCoordinator(client: client)
         try coord.beginStreaming()
         XCTAssertThrowsError(try coord.sendManualLine("G0 X0")) { err in

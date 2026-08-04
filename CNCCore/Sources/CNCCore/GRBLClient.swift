@@ -26,6 +26,9 @@ public final class GRBLClient: @unchecked Sendable {
     public var onConnectionChange: ((GRBLConnectionState) -> Void)?
     public var onLine: ((String) -> Void)?
 
+    /// Scales connect/probe sleeps. Unit tests set this to `0` for speed.
+    public var timingScale: Double = 1.0
+
     public init(transport: GRBLTransport = SerialPort()) {
         self.transport = transport
     }
@@ -40,10 +43,10 @@ public final class GRBLClient: @unchecked Sendable {
         }
 
         // Nano auto-reset settle
-        Thread.sleep(forTimeInterval: 2.0)
+        sleepScaled(2.0)
         try softReset()
-        Thread.sleep(forTimeInterval: 0.4)
-        _ = try drain(timeout: 0.5)
+        sleepScaled(0.4)
+        _ = try drain(timeout: max(0.05, 0.5 * timingScale))
         setConnection(.connected)
         startPolling()
     }
@@ -92,7 +95,7 @@ public final class GRBLClient: @unchecked Sendable {
 
     public func halt() throws {
         try feedHold()
-        Thread.sleep(forTimeInterval: 0.05)
+        sleepScaled(0.05)
         try softReset()
     }
 
@@ -151,10 +154,10 @@ public final class GRBLClient: @unchecked Sendable {
         stopPolling()
         defer { startPolling() }
         try applyStepsPerMm(x: x, y: y)
-        Thread.sleep(forTimeInterval: 0.15)
-        _ = try drain(timeout: 0.2)
+        sleepScaled(0.15)
+        _ = try drain(timeout: max(0.05, 0.2 * timingScale))
         try sendLine("$$")
-        let text = try collectUntilOk(timeout: 3.0)
+        let text = try collectUntilOk(timeout: max(0.2, 3.0 * timingScale))
         let settings = GRBLProbeResult.parseSettings(text)
         return (settings["$100"], settings["$101"])
     }
@@ -162,7 +165,7 @@ public final class GRBLClient: @unchecked Sendable {
     /// Brief pen-down mark on paper, then lift (for calibration dots).
     public func markPoint(machine: MachineProfile, dwellSeconds: Double = 0.15) throws {
         try penDown(machine)
-        Thread.sleep(forTimeInterval: dwellSeconds)
+        sleepScaled(dwellSeconds)
         try penUp(machine)
     }
 
@@ -171,14 +174,14 @@ public final class GRBLClient: @unchecked Sendable {
         defer { startPolling() }
 
         try softReset()
-        Thread.sleep(forTimeInterval: 0.5)
-        let banner = try drain(timeout: 0.8)
+        sleepScaled(0.5)
+        let banner = try drain(timeout: max(0.05, 0.8 * timingScale))
 
         try sendLine("$I")
-        let build = try collectUntilOk(timeout: 2.0)
+        let build = try collectUntilOk(timeout: max(0.2, 2.0 * timingScale))
 
         try sendLine("$$")
-        let settingsText = try collectUntilOk(timeout: 3.0)
+        let settingsText = try collectUntilOk(timeout: max(0.2, 3.0 * timingScale))
 
         let result = GRBLProbeResult(
             buildInfo: build,
@@ -292,5 +295,11 @@ public final class GRBLClient: @unchecked Sendable {
 
     private func fmt(_ v: Double) -> String {
         String(format: "%.3f", v)
+    }
+
+    private func sleepScaled(_ seconds: TimeInterval) {
+        let scaled = seconds * timingScale
+        guard scaled > 0 else { return }
+        Thread.sleep(forTimeInterval: scaled)
     }
 }

@@ -106,6 +106,17 @@ public final class JobRunner: @unchecked Sendable {
             try? coordinator?.enterPenChangeWait()
             onPenChange?()
         }
+        // Status reports also arrive on the line stream — finalize Idle-gated completion
+        // even when AppModel has not wired `noteStatus`.
+        if let status = GRBLStatus.parse(line),
+           streamer.awaitingIdleForCompletion,
+           status.state.lowercased().contains("idle") {
+            streamer.noteMachineIdle()
+            if streamer.state == .completed {
+                coordinator?.endStreaming()
+                stopPump()
+            }
+        }
         emit(force: true)
         pump()
     }
