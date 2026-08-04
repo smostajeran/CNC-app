@@ -104,8 +104,9 @@ final class SVGToGCodeTests: XCTestCase {
     }
 
     func testMachineProfileDefaultsRoundTrip() {
-        let defaults = UserDefaults(suiteName: "ta4host.tests.\(UUID().uuidString)")!
-        defer { defaults.removePersistentDomain(forName: defaults.suiteName!) }
+        let suite = "ta4host.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
 
         var profile = MachineProfile.ta4
         profile.invertX = true
