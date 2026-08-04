@@ -19,9 +19,9 @@ public enum GCodeNormalizer {
         let penDown = String(format: "G1 Z%.3f F%.3f", profile.penDownZ, profile.drawFeed)
         let penUp = String(format: "G0 Z%.3f", profile.penUpZ)
 
-        for raw in text.split(whereSeparator: \.isNewline, omittingEmptySubsequences: false) {
+        for raw in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
             let line = String(raw)
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = line.trimmingCharacters(in: CharacterSet.whitespaces)
             let upper = trimmed.uppercased()
 
             if isPenDown(upper) {
