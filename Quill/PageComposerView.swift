@@ -66,19 +66,28 @@ struct PageComposerView: View {
                 }
 
                 Picker("Format", selection: Binding(
-                    get: { model.page.format.id },
+                    get: {
+                        // Map legacy ISO A4 ids to the bed-safe preset so the menu selection is valid.
+                        let id = model.page.format.id
+                        if id == PageFormat.a4Landscape.id || id == PageFormat.a4Portrait.id {
+                            return PageFormat.a4OnTA4Bed.id
+                        }
+                        return id
+                    },
                     set: { id in
                         if let format = PageFormat.presets.first(where: { $0.id == id }) {
                             model.setPageFormat(format)
                         }
                     }
                 )) {
-                    ForEach(PageFormat.presets) { format in
-                        let fits = format.fits(on: model.machine)
-                        Text("\(format.name) (\(Int(format.widthMm))×\(Int(format.heightMm)))\(fits ? "" : " — too large")")
+                    ForEach(PageFormat.presets.filter { $0.fits(on: model.machine) }) { format in
+                        Text("\(format.name) (\(Int(format.widthMm))×\(Int(format.heightMm)))")
                             .tag(format.id)
                     }
                 }
+                Text("TA-4 bed is \(Int(model.machine.travelX))×\(Int(model.machine.travelY)) mm. A4 landscape here is 297×200 (ISO 297×210 does not fit).")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.inkMuted)
 
                 HStack {
                     labeled("Bed X", value: Binding(

@@ -31,11 +31,14 @@ public struct PageFormat: Equatable, Sendable, Codable, Identifiable, Hashable {
     public static let placeCard = PageFormat(id: "place-card", name: "Place card", widthMm: 100, heightMm: 50)
     public static let fullBed = PageFormat(id: "full-bed", name: "Full bed", widthMm: 390, heightMm: 200)
 
+    /// Formats shown in Compose — excludes ISO A4 sizes that cannot fit a stock TA-4 bed.
     public static let presets: [PageFormat] = [
         .a4OnTA4Bed, .a5Landscape, .a5Portrait, .fullBed,
         .envelopeDL, .invitation, .placeCard,
-        .a4Landscape, .a4Portrait,
     ]
+
+    /// All named formats including oversized ISO A4 (for migration / decode only).
+    public static let allKnownFormats: [PageFormat] = presets + [.a4Landscape, .a4Portrait]
 
     public static func custom(widthMm: Double, heightMm: Double) -> PageFormat {
         PageFormat(
@@ -388,9 +391,9 @@ public struct PageDocument: Equatable, Sendable, Codable {
     public var optimizePaths: Bool
 
     public init(
-        format: PageFormat = .a5Landscape,
+        format: PageFormat = .a4OnTA4Bed,
         bedOriginX: Double = 20,
-        bedOriginY: Double = 20,
+        bedOriginY: Double = 0,
         pageRotationDegrees: Double = 0,
         layers: [PageLayer] = [],
         elements: [PageElement] = [],
@@ -454,6 +457,33 @@ public struct PageDocument: Equatable, Sendable, Codable {
                 }
             }
         }
+    }
+
+    /// Replace ISO A4 (297×210 / 210×297) and other oversized formats with a bed-safe preset.
+    /// Returns true when the format was changed.
+    @discardableResult
+    public mutating func migrateFormatToFitBed(_ profile: MachineProfile) -> Bool {
+        let before = format
+        let isISOA4Landscape = format.id == PageFormat.a4Landscape.id
+            || (abs(format.widthMm - 297) < 0.6 && abs(format.heightMm - 210) < 0.6)
+        let isISOA4Portrait = format.id == PageFormat.a4Portrait.id
+            || (abs(format.widthMm - 210) < 0.6 && abs(format.heightMm - 297) < 0.6)
+
+        if isISOA4Landscape || isISOA4Portrait {
+            format = .a4OnTA4Bed
+        } else if !format.fits(on: profile) {
+            if PageFormat.a4OnTA4Bed.fits(on: profile) {
+                format = .a4OnTA4Bed
+            } else if PageFormat.a5Landscape.fits(on: profile) {
+                format = .a5Landscape
+            } else if let first = PageFormat.presets.first(where: { $0.fits(on: profile) }) {
+                format = first
+            }
+        }
+
+        bedOriginX = min(max(0, bedOriginX), max(0, profile.travelX - format.widthMm))
+        bedOriginY = min(max(0, bedOriginY), max(0, profile.travelY - format.heightMm))
+        return format != before
     }
 
     /// Persist automatic / expand-box heights onto each text element so canvas,

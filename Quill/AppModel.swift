@@ -1175,6 +1175,7 @@ final class AppModel: ObservableObject {
         suppressHistory = true
         var next = project
         next.page.migrateLegacyText()
+        next.page.migrateFormatToFitBed(machine)
         next.page.applyTextBoxSizing()
         page = next.page
         batch = next.batch
@@ -1190,6 +1191,23 @@ final class AppModel: ObservableObject {
     }
 
     func setPageFormat(_ format: PageFormat) {
+        var format = format
+        // Never accept ISO A4 297×210 on a 200 mm-deep TA-4 bed.
+        if !format.fits(on: machine) {
+            let isoLandscape = abs(format.widthMm - 297) < 0.6 && abs(format.heightMm - 210) < 0.6
+            let isoPortrait = abs(format.widthMm - 210) < 0.6 && abs(format.heightMm - 297) < 0.6
+            if isoLandscape || isoPortrait || format.id == PageFormat.a4Landscape.id
+                || format.id == PageFormat.a4Portrait.id {
+                format = .a4OnTA4Bed
+                calibrationNote = "Using A4 landscape 297×200 mm — full ISO A4 (297×210) is taller than the TA-4 bed."
+            } else {
+                lastError = String(
+                    format: "“%@” (%.0f×%.0f mm) does not fit the %.0f×%.0f mm bed.",
+                    format.name, format.widthMm, format.heightMm, machine.travelX, machine.travelY
+                )
+                return
+            }
+        }
         beginEditTransaction()
         page.format = format
         // Keep page on bed if possible.
@@ -1197,6 +1215,23 @@ final class AppModel: ObservableObject {
         page.bedOriginY = min(page.bedOriginY, max(0, machine.travelY - format.heightMm))
         endEditTransaction()
         recomposePage()
+    }
+
+    /// Fix saved/autosaved ISO A4 pages that cannot fit the live bed.
+    @discardableResult
+    func ensurePageFormatFitsBed() -> Bool {
+        var page = self.page
+        let changed = page.migrateFormatToFitBed(machine)
+        guard changed else { return false }
+        beginEditTransaction()
+        self.page = page
+        endEditTransaction()
+        if lastError?.contains("does not fit") == true {
+            lastError = nil
+        }
+        calibrationNote = "Page format adjusted to \(page.format.name) (\(Int(page.format.widthMm))×\(Int(page.format.heightMm)) mm) so it fits the bed."
+        recomposePage()
+        return true
     }
 
     func updatePageSetting(_ mutate: (inout PageDocument) -> Void) {
@@ -1763,6 +1798,14 @@ final class AppModel: ObservableObject {
     }
 
     func recomposePage() {
+        // Quietly replace ISO A4 297×210 (etc.) before compose so Start/preview are not blocked.
+        var migrated = page
+        if migrated.migrateFormatToFitBed(machine) {
+            page = migrated
+            if lastError?.contains("does not fit") == true {
+                lastError = nil
+            }
+        }
         page.applyTextBoxSizing()
         // Empty Compose pages are normal — never raise a modal for that.
         // Also drop stale Draw-mode preview paths so ink doesn't look "on the page".

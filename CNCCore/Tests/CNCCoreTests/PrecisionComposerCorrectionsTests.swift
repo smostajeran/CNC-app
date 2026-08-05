@@ -318,6 +318,23 @@ final class PrecisionComposerCorrectionsTests: XCTestCase {
         }
     }
 
+    func testMigrateISOA4LandscapeToBedSafeA4() {
+        var page = PageDocument(format: .a4Landscape, bedOriginX: 20, bedOriginY: 0)
+        page.elements = [
+            PageElement(
+                name: "T",
+                kind: .textBox(text: "Hi", style: TextBoxStyle()),
+                xMm: 10,
+                yMm: 10,
+                layerID: page.defaultLayerID
+            ),
+        ]
+        XCTAssertTrue(page.migrateFormatToFitBed(.ta4))
+        XCTAssertEqual(page.format.id, PageFormat.a4OnTA4Bed.id)
+        XCTAssertEqual(page.format.heightMm, 200, accuracy: 0.01)
+        XCTAssertNoThrow(try PageComposer.compose(page, profile: .ta4, optimize: false))
+    }
+
     func testExpandBoxPersistsHeightOnDocument() {
         var page = PageDocument(format: .a5Landscape, bedOriginX: 20, bedOriginY: 20)
         let style = TextBoxStyle(fontSizeMm: 6, heightMode: .fixed, overflowPolicy: .expandBox)

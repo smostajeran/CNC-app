@@ -44,6 +44,7 @@ struct ComposeGlassView: View {
                 .padding(.bottom, 16)
         }
         .onAppear {
+            _ = model.ensurePageFormatFitsBed()
             if model.composedPage == nil && !model.page.elements.isEmpty {
                 model.recomposePage()
             }
