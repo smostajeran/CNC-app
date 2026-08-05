@@ -8,7 +8,7 @@ enum BuildInfo {
     static let buildNumberFallback = "4"
 
     /// Stamped short SHA at compile time (or `"unknown"` in the repo source tree).
-    static let gitCommit = "2abb47b"
+    static let gitCommit = "unknown"
 
     static var shortVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
