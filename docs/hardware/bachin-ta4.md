@@ -47,7 +47,8 @@ Host PC / Android  --USB serial G-code-->  ATmega328P Nano + GRBL 1.1f
 - **Link:** **USB serial** (typical GRBL baud **115200** — confirm with live probe)
 - **Host software:** Bachin Draw (official), Candle, Engraver Master; Inkscape for CAM
 - Machine type in Bachin Draw: **Pen Writing Machine with Motor**
-- Axis invert available if motors run the wrong way
+- Axis invert available if motors run the wrong way (`$3` jog/motion)
+- Homing seek direction is separate (`$23`). If `$H` runs toward the open end (no switch), flip the matching `$23` bit — do not keep driving into the frame
 - GRBL `$` params are board-specific — capture with `$$` / `$I` via [`scripts/probe-grbl.py`](../../scripts/probe-grbl.py). Do not assume FAQ sample travel (`$130/$131 = 200`) matches this 390×200 mm frame.
 
 ### Official docs

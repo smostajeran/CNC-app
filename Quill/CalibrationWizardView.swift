@@ -382,27 +382,61 @@ struct CalibrationWizardView: View {
         VStack(alignment: .leading, spacing: 14) {
             stepTitle(
                 "Homing test",
-                "Raise the pen. Home X and Y only at low speed. Each axis must move toward its switch, touch it, back off slightly, and stop. Stop immediately if an axis runs away. Z is not homed."
+                "Raise the pen. `$H` must move toward the physical end switches — never toward the open end of the bed. Z is not homed (no Z switch)."
             )
             motionGateBanner
+
+            HelpCard(
+                title: "If Home runs away from the switches",
+                message: "Hit Emergency Stop immediately. Jog invert ($3) and homing direction ($23) are separate — flipping axes for drawing does not fix seek direction. Use “Flip X/Y home dir” below, park near the middle, then try Home again.",
+                tone: .danger
+            )
+
+            Text("Homing seek $23 = \(model.machine.homingDirInvertMask)"
+                + " · X \(model.machine.homingDirInvertX ? "inverted" : "default")"
+                + " · Y \(model.machine.homingDirInvertY ? "inverted" : "default")")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.inkMuted)
+
             HStack(spacing: 10) {
                 Button("Enable homing ($22=1)") { model.enableHomingSetting() }
                     .disabled(!model.canCalibrateMotion)
+                Button("Flip X home dir ($23)") {
+                    homingStarted = false
+                    model.flipHomingDirection(.x)
+                }
+                .disabled(!model.canCalibrateMotion)
+                Button("Flip Y home dir ($23)") {
+                    homingStarted = false
+                    model.flipHomingDirection(.y)
+                }
+                .disabled(!model.canCalibrateMotion)
+            }
+
+            HStack(spacing: 10) {
                 Button("Pen up") { model.penUp() }
                     .disabled(!model.canCalibrateMotion)
                 Button("Home X/Y") {
-                    homingStarted = true
+                    // Do not mark success until the user confirms the seek was correct.
+                    homingStarted = false
                     model.homeXY()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.steel)
                 .disabled(!model.canCalibrateMotion || endStopsIncomplete)
+                EmergencyStopButton(compact: true)
             }
-            Text("Watch the gantry: toward switch → click → small backoff → Idle. Use Emergency Stop if it moves away from a switch.")
+
+            Text("Expected: each axis moves toward its switch → click → small backoff → Idle. Finger on E-Stop.")
                 .font(Theme.captionFont)
                 .foregroundStyle(Theme.inkMuted)
-            Toggle("Both axes homed correctly (toward switch, touch, backoff, stop)", isOn: $homingStarted)
+
+            Toggle("Both axes sought the switches correctly (not the open end)", isOn: $homingStarted)
                 .disabled(!model.canCalibrateMotion)
+        }
+        .onAppear {
+            // Refresh $$ so $23 matches the controller before the user homes.
+            model.probe()
         }
     }
 

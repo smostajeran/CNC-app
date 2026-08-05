@@ -33,6 +33,9 @@ public struct MachineProfile: Equatable, Sendable, Codable {
     public var hardLimitsEnabled: Bool
     /// Homing cycle enabled on controller (`$22`).
     public var homingEnabled: Bool
+    /// GRBL `$23` homing direction invert mask (bit0=X, bit1=Y, bit2=Z).
+    /// Independent of `$3` jog/motion invert — wrong `$23` sends `$H` away from the switches.
+    public var homingDirInvertMask: Int
     /// True after the controlled commissioning wizard completes successfully.
     public var commissioningComplete: Bool
 
@@ -68,6 +71,7 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         softLimitsEnabled: Bool = false,
         hardLimitsEnabled: Bool = false,
         homingEnabled: Bool = false,
+        homingDirInvertMask: Int = 0,
         commissioningComplete: Bool = false
     ) {
         self.name = name
@@ -95,6 +99,7 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         self.softLimitsEnabled = softLimitsEnabled
         self.hardLimitsEnabled = hardLimitsEnabled
         self.homingEnabled = homingEnabled
+        self.homingDirInvertMask = homingDirInvertMask & 0b111
         self.commissioningComplete = commissioningComplete
         clampPressureRange()
     }
@@ -134,6 +139,7 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         if let v = settings["$20"] { softLimitsEnabled = v >= 1 }
         if let v = settings["$21"] { hardLimitsEnabled = v >= 1 }
         if let v = settings["$22"] { homingEnabled = v >= 1 }
+        if let v = settings["$23"] { homingDirInvertMask = Int(v) & 0b111 }
         if let dir = settings["$3"] {
             let mask = Int(dir)
             invertX = (mask & 1) != 0
@@ -141,6 +147,16 @@ public struct MachineProfile: Equatable, Sendable, Codable {
             invertZ = (mask & 4) != 0
         }
         clampPressureRange()
+    }
+
+    public var homingDirInvertX: Bool { (homingDirInvertMask & 1) != 0 }
+    public var homingDirInvertY: Bool { (homingDirInvertMask & 2) != 0 }
+    public var homingDirInvertZ: Bool { (homingDirInvertMask & 4) != 0 }
+
+    public mutating func toggleHomingDirInvert(axisBit: Int) {
+        let bit = 1 << axisBit
+        homingDirInvertMask ^= bit
+        homingDirInvertMask &= 0b111
     }
 
     /// Correct steps/mm after a distance check: `new = current × (commanded / measured)`.
@@ -188,7 +204,7 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         case jogFeed, drawFeed, invertX, invertY, invertZ
         case stepsPerMmX, stepsPerMmY, stepsPerMmZ, buildInfo
         case penHeadType, penUpAngle, penDownAngle
-        case softLimitsEnabled, hardLimitsEnabled, homingEnabled, commissioningComplete
+        case softLimitsEnabled, hardLimitsEnabled, homingEnabled, homingDirInvertMask, commissioningComplete
     }
 
     public init(from decoder: Decoder) throws {
@@ -217,6 +233,7 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         softLimitsEnabled = try c.decodeIfPresent(Bool.self, forKey: .softLimitsEnabled) ?? false
         hardLimitsEnabled = try c.decodeIfPresent(Bool.self, forKey: .hardLimitsEnabled) ?? false
         homingEnabled = try c.decodeIfPresent(Bool.self, forKey: .homingEnabled) ?? false
+        homingDirInvertMask = (try c.decodeIfPresent(Int.self, forKey: .homingDirInvertMask) ?? 0) & 0b111
         commissioningComplete = try c.decodeIfPresent(Bool.self, forKey: .commissioningComplete) ?? false
         clampPressureRange()
     }

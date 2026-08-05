@@ -453,6 +453,31 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Write GRBL `$23` homing-direction invert mask (independent of jog `$3`).
+    func applyHomingDirectionToController() {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        do {
+            try coordinator.setSetting("$23", value: Double(machine.homingDirInvertMask))
+            persistMachine()
+            console.append("--- Homing direction $23=\(machine.homingDirInvertMask) ---")
+            calibrationNote = "Homing seek direction updated ($23). Home again only after the head is clear of the open end."
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Flip which way `$H` seeks on one axis. Use when Home runs away from the end switch.
+    func flipHomingDirection(_ axis: CalibrationAxis) {
+        switch axis {
+        case .x: machine.toggleHomingDirInvert(axisBit: 0)
+        case .y: machine.toggleHomingDirInvert(axisBit: 1)
+        }
+        applyHomingDirectionToController()
+    }
+
     /// Write measured safe travel and enable soft limits (`$20`). Optionally hard limits (`$21`).
     /// Call only after homing works — soft limits need a valid machine position.
     func applySafeTravelAndLimits(

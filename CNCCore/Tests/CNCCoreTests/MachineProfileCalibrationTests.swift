@@ -34,4 +34,16 @@ final class MachineProfileCalibrationTests: XCTestCase {
         XCTAssertTrue(profile.invertY)
         XCTAssertFalse(profile.invertZ)
     }
+
+    func testHomingDirectionMaskIndependentOfJogInvert() {
+        var profile = MachineProfile.ta4
+        profile.applyGRBLSettings(["$3": 3, "$23": 1])
+        XCTAssertTrue(profile.invertX)
+        XCTAssertTrue(profile.invertY)
+        XCTAssertTrue(profile.homingDirInvertX)
+        XCTAssertFalse(profile.homingDirInvertY)
+        profile.toggleHomingDirInvert(axisBit: 1)
+        XCTAssertTrue(profile.homingDirInvertY)
+        XCTAssertEqual(profile.homingDirInvertMask, 0b011)
+    }
 }
