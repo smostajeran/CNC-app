@@ -44,8 +44,91 @@ final class JobPreflightTests: XCTestCase {
         G1 X20 Y10
         G0 Z5
         """
-        let report = JobPreflight.assess(gcode: gcode, profile: .ta4, machineState: "Idle", workZeroKnown: true)
+        var profile = MachineProfile.ta4
+        profile.softLimitsEnabled = true
+        let report = JobPreflight.assess(
+            gcode: gcode,
+            profile: profile,
+            machineState: "Idle",
+            workZeroKnown: true,
+            requireHomed: true,
+            isHomed: true,
+            machinePosition: SIMD3(0, 0, 0),
+            workPosition: SIMD3(0, 0, 0),
+            requireSoftLimits: true
+        )
         XCTAssertTrue(report.okToStart)
+    }
+
+    func testPreflightBlocksStartWithoutHome() {
+        let gcode = """
+        G21
+        G90
+        G0 X10 Y10
+        """
+        let report = JobPreflight.assess(
+            gcode: gcode,
+            profile: .ta4,
+            machineState: "Idle",
+            requireHomed: true,
+            isHomed: false
+        )
+        XCTAssertFalse(report.okToStart)
+        XCTAssertTrue(report.issues.contains { $0.message.contains("Home X/Y") })
+    }
+
+    func testPreflightBlocksWhenWorkOffsetPushesPastTravel() {
+        // Work path fits 390×200, but G54 origin at machine (100,50) pushes max Y to 210.
+        let gcode = """
+        G21
+        G90
+        G0 X10 Y10
+        G1 X50 Y160 F1000
+        """
+        var profile = MachineProfile.ta4
+        profile.softLimitsEnabled = true
+        let report = JobPreflight.assess(
+            gcode: gcode,
+            profile: profile,
+            machineState: "Idle",
+            workZeroKnown: true,
+            requireHomed: true,
+            isHomed: true,
+            machinePosition: SIMD3(100, 50, 0),
+            workPosition: SIMD3(0, 0, 0),
+            requireSoftLimits: true
+        )
+        XCTAssertFalse(report.okToStart)
+        XCTAssertTrue(report.issues.contains { $0.message.contains("work offset") })
+    }
+
+    func testPreflightBlocksWhenSoftLimitsOff() {
+        let gcode = """
+        G21
+        G90
+        G0 X10 Y10
+        """
+        var profile = MachineProfile.ta4
+        profile.softLimitsEnabled = false
+        let report = JobPreflight.assess(
+            gcode: gcode,
+            profile: profile,
+            machineState: "Idle",
+            requireHomed: true,
+            isHomed: true,
+            requireSoftLimits: true
+        )
+        XCTAssertFalse(report.okToStart)
+        XCTAssertTrue(report.issues.contains { $0.message.contains("$20") })
+    }
+
+    func testMotionSafetyMachineBounds() {
+        let work = PlotBounds(minX: 0, minY: 0, maxX: 100, maxY: 80)
+        let machine = MotionSafety.machineBounds(workBounds: work, offsetX: 20, offsetY: 10)
+        XCTAssertEqual(machine.minX, 20, accuracy: 0.001)
+        XCTAssertEqual(machine.maxY, 90, accuracy: 0.001)
+        XCTAssertTrue(MotionSafety.fitsTravel(machine, travelX: 390, travelY: 200))
+        XCTAssertFalse(MotionSafety.fitsTravel(machine, travelX: 390, travelY: 85))
     }
 
     func testFrameGCodeStaysPenUp() {

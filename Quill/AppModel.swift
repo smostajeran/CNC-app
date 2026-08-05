@@ -58,6 +58,10 @@ final class AppModel: ObservableObject {
     @Published var motorsPowerConfirmed = false
     /// True while Unlock recovery is in flight (soft-reset briefly reports Alarm — suppress nag).
     @Published var isUnlocking = false
+    /// X/Y successfully homed on this USB connection. Cleared after E-Stop / disconnect.
+    @Published var xyHomedThisSession = false
+    /// Waiting for Idle after `$H` before trusting machine coordinates.
+    private var awaitingHomeCompletion = false
 
     @Published var mode: QuillMode = .setup
     @Published var showDiagnostics = false
@@ -175,6 +179,19 @@ final class AppModel: ObservableObject {
                 self.status = status
                 self.runner.noteStatus(status)
                 let alarm = status.state.localizedCaseInsensitiveContains("alarm")
+                let idle = status.state.localizedCaseInsensitiveContains("idle")
+                if self.awaitingHomeCompletion {
+                    if alarm {
+                        self.awaitingHomeCompletion = false
+                        self.xyHomedThisSession = false
+                        self.console.append("--- Homing failed (Alarm) — position not trusted for Start ---")
+                    } else if idle {
+                        self.awaitingHomeCompletion = false
+                        self.xyHomedThisSession = true
+                        self.console.append("--- Homing complete — machine position trusted for Start ---")
+                        self.calibrationNote = "Homed. Leave work zero at this origin for Compose (bed coordinates)."
+                    }
+                }
                 if alarm {
                     // Soft-reset briefly reports Alarm during Unlock — don't overwrite that progress.
                     if !self.isUnlocking {
@@ -191,8 +208,18 @@ final class AppModel: ObservableObject {
         }
         client.onConnectionChange = { [weak self] state in
             Task { @MainActor in
-                self?.connectionState = state
-                self?.updateStatusPolling()
+                guard let self else { return }
+                self.connectionState = state
+                if case .connected = state {
+                    // New link — require Home before Start even if MPos reads 0,0.
+                    self.xyHomedThisSession = false
+                    self.awaitingHomeCompletion = false
+                }
+                if case .disconnected = state {
+                    self.xyHomedThisSession = false
+                    self.awaitingHomeCompletion = false
+                }
+                self.updateStatusPolling()
             }
         }
         runner.onProgress = { [weak self] progress, state in
@@ -252,8 +279,10 @@ final class AppModel: ObservableObject {
                 try client.connect(path: path, baudRate: baud)
                 await MainActor.run {
                     self.connectionState = .connected
+                    self.xyHomedThisSession = false
+                    self.awaitingHomeCompletion = false
                     self.noticeTitle = "Check power"
-                    self.motionWarning = "USB linked. Confirm the blue power switch / board POWER LED is on (12V). USB can connect with motors unpowered."
+                    self.motionWarning = "USB linked. Confirm 12 V power, then Move → Home X/Y before Start. Soft limits must be on after a successful Home."
                     self.requestStatus()
                 }
             } catch {
@@ -276,6 +305,8 @@ final class AppModel: ObservableObject {
         client.disconnect()
         connectionState = .disconnected
         motorsPowerConfirmed = false
+        xyHomedThisSession = false
+        awaitingHomeCompletion = false
         updateStatusPolling()
     }
 
@@ -349,6 +380,9 @@ final class AppModel: ObservableObject {
         // Clear Fault: ALARM:3 in the Run panel without soft-resetting again.
         runner.abandonWithoutReset()
         streamState = .idle
+        // Alarm / E-Stop may mean lost steps — require Home before the next Start.
+        xyHomedThisSession = false
+        awaitingHomeCompletion = false
         guard isConnected else {
             lastError = "Connect first"
             return
@@ -427,6 +461,9 @@ final class AppModel: ObservableObject {
     func halt() {
         penChangeMessage = nil
         runner.cancel()
+        // Position may be wrong after a mid-motion reset — block Start until re-homed.
+        xyHomedThisSession = false
+        awaitingHomeCompletion = false
         guard isConnected else {
             lastError = "Connect first"
             noticeTitle = "Emergency stop"
@@ -439,8 +476,10 @@ final class AppModel: ObservableObject {
             do {
                 try coordinator.halt()
                 await MainActor.run {
-                    self.motionWarning = "Motion halted and the controller was reset. If the header shows Locked, tap Unlock before moving again."
-                    self.console.append("--- Emergency stop (feed hold + soft reset) ---")
+                    self.xyHomedThisSession = false
+                    self.awaitingHomeCompletion = false
+                    self.motionWarning = "Motion halted. Unlock if Locked, then Home X/Y before Start — do not plot on an untrusted origin."
+                    self.console.append("--- Emergency stop (feed hold + soft reset) — re-home required ---")
                     self.lastError = nil
                     self.requestStatus()
                 }
@@ -626,10 +665,14 @@ final class AppModel: ObservableObject {
             return
         }
         do {
+            xyHomedThisSession = false
+            awaitingHomeCompletion = true
             try coordinator.homeXY(machine: machine)
             console.append("--- Homing X/Y only (pen raised; Z is not homed) — wait until motion stops ---")
-            calibrationNote = "Homing X/Y. Wait until the gantry stops at the switches, then continues."
+            calibrationNote = "Homing X/Y. Wait until Idle at the switches — Start stays blocked until then."
         } catch {
+            awaitingHomeCompletion = false
+            xyHomedThisSession = false
             lastError = error.localizedDescription
                 + " If homing is disabled on the controller, enable it ($22=1) or home manually with jog."
         }
@@ -1748,13 +1791,7 @@ final class AppModel: ObservableObject {
             jobText = composed.gcode
             jobName = page.name
             runner.loadGCode(jobText)
-            preflightReport = JobPreflight.assess(
-                gcode: jobText,
-                profile: machine,
-                machineState: status.state,
-                workZeroKnown: workZeroKnown,
-                isBusy: isBusyBlockingJob
-            )
+            preflightReport = assessJobPreflight(gcode: jobText)
             if composed.hasBlockingOverflow {
                 lastError = composed.warnings.first ?? "Text overflow — resolve before plotting"
             } else if lastError == PageComposerError.emptyPage.errorDescription {
@@ -2034,12 +2071,22 @@ final class AppModel: ObservableObject {
 
     func runPreflight() {
         try? coordinator.requestStatus()
-        preflightReport = JobPreflight.assess(
-            gcode: jobText,
+        preflightReport = assessJobPreflight(gcode: jobText)
+    }
+
+    /// Start-grade preflight: homing, soft limits, and machine-space travel envelope.
+    private func assessJobPreflight(gcode: String) -> JobPreflightReport {
+        JobPreflight.assess(
+            gcode: gcode,
             profile: machine,
             machineState: status.state,
             workZeroKnown: workZeroKnown,
-            isBusy: isBusyBlockingJob
+            isBusy: isBusyBlockingJob,
+            requireHomed: true,
+            isHomed: xyHomedThisSession,
+            machinePosition: status.mpos,
+            workPosition: status.wpos,
+            requireSoftLimits: true
         )
     }
 
@@ -2064,14 +2111,16 @@ final class AppModel: ObservableObject {
             lastError = "Resolve text overflow before plotting. This cannot be bypassed."
             return
         }
+        // Direction for streamed G0/G1 comes only from controller `$3`. Keep it in sync
+        // before any motion so jog calibration and Start cannot disagree.
+        do {
+            try coordinator.setSetting("$3", value: Double(machine.directionInvertMask))
+        } catch {
+            lastError = "Could not sync axis direction ($3) before Start: \(error.localizedDescription)"
+            return
+        }
         try? coordinator.requestStatus()
-        let report = JobPreflight.assess(
-            gcode: jobText,
-            profile: machine,
-            machineState: status.state,
-            workZeroKnown: workZeroKnown,
-            isBusy: isBusyBlockingJob
-        )
+        let report = assessJobPreflight(gcode: jobText)
         preflightReport = report
         if !report.okToStart {
             lastError = report.issues.first(where: { $0.severity == .error })?.message

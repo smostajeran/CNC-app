@@ -43,7 +43,15 @@ public enum JobPreflight {
         profile: MachineProfile,
         machineState: String? = nil,
         workZeroKnown: Bool = false,
-        isBusy: Bool = false
+        isBusy: Bool = false,
+        /// When true, Start is blocked until X/Y have been homed this connection.
+        requireHomed: Bool = false,
+        isHomed: Bool = false,
+        /// Live GRBL positions for machine-space envelope (soft limits alone are not enough).
+        machinePosition: SIMD3<Double>? = nil,
+        workPosition: SIMD3<Double>? = nil,
+        /// When true, Start requires soft limits enabled on the profile (`$20`).
+        requireSoftLimits: Bool = false
     ) -> JobPreflightReport {
         var issues: [PreflightIssue] = []
         let parse = GCodeParser.parse(gcode, defaultFeed: profile.drawFeed, defaultRapid: profile.jogFeed)
@@ -54,6 +62,20 @@ public enum JobPreflight {
 
         if isBusy {
             issues.append(.init(severity: .error, message: "Controller is busy with another operation."))
+        }
+
+        if requireHomed && !isHomed {
+            issues.append(.init(
+                severity: .error,
+                message: "Home X/Y before Start. Without a valid home the controller can drive past the open end of the bed (no limit switch there)."
+            ))
+        }
+
+        if requireSoftLimits && !profile.softLimitsEnabled {
+            issues.append(.init(
+                severity: .error,
+                message: "Soft limits ($20) are off. Home X/Y, then enable soft limits in Calibrate before Start so travel cannot exceed $130/$131."
+            ))
         }
 
         if let machineState {
@@ -73,7 +95,7 @@ public enum JobPreflight {
         if !workZeroKnown {
             issues.append(.init(
                 severity: .warning,
-                message: "Work zero has not been set in this session — confirm origin before inking."
+                message: "Work zero has not been set in this session — Compose jobs use bed coordinates from home. Prefer leaving G54 at the homed origin unless you intend a paper-relative offset."
             ))
         }
 
@@ -101,6 +123,33 @@ public enum JobPreflight {
                         profile.travelX, profile.travelY
                     )
                 ))
+            }
+
+            // Work-space bounds can look fine while G54 offset drives machine past travel.
+            if let mpos = machinePosition, let wpos = workPosition {
+                let offset = MotionSafety.workOffset(machinePosition: mpos, workPosition: wpos)
+                let machineBounds = MotionSafety.machineBounds(
+                    workBounds: b,
+                    offsetX: offset.x,
+                    offsetY: offset.y
+                )
+                if !MotionSafety.fitsTravel(
+                    machineBounds,
+                    travelX: profile.travelX,
+                    travelY: profile.travelY,
+                    margin: margin
+                ) {
+                    issues.append(.init(
+                        severity: .error,
+                        message: String(
+                            format: "With current work offset (G54 ≈ %.1f, %.1f mm), machine path (%.1f, %.1f)–(%.1f, %.1f) exceeds travel %.0f×%.0f mm. Re-home and leave work zero at the homed origin, or move the page.",
+                            offset.x, offset.y,
+                            machineBounds.minX, machineBounds.minY,
+                            machineBounds.maxX, machineBounds.maxY,
+                            profile.travelX, profile.travelY
+                        )
+                    ))
+                }
             }
         }
 

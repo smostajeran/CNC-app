@@ -114,7 +114,7 @@ struct MoveView: View {
                                 Text("If nothing moves, check the 12V adapter and blue power switch — USB can connect while motors are off.")
                                     .font(Theme.captionFont)
                                     .foregroundStyle(Theme.inkMuted)
-                                Text("Home X/Y seeks the two end buttons so the controller knows the corner of the bed. After homing, jog to your page corner and set zero in Calibrate.")
+                                Text("Home X/Y seeks the end switches so the controller knows the bed corner. Compose jobs use bed coordinates from that homed origin — leave work zero there. Enable soft limits ($20) after a successful Home before Start.")
                                     .font(Theme.captionFont)
                                     .foregroundStyle(Theme.inkMuted)
                                 DisclosureGroup("Pen heights (mm)") {

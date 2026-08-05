@@ -60,6 +60,22 @@ final class GRBLClientProbeTests: XCTestCase {
         client.disconnect()
     }
 
+    func testJogDoesNotHostNegateWhenInvertFlagsSet() throws {
+        let transport = MockTransport()
+        let client = GRBLClient(transport: transport)
+        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        var inverted = MachineProfile.ta4
+        inverted.invertX = true
+        inverted.invertY = true
+        transport.written.removeAll()
+        try client.jog(dx: 10, dy: 5, feed: 1000, machine: inverted)
+        let lines = transport.written.compactMap { String(data: $0, encoding: .utf8) }
+        let jog = lines.first { $0.contains("$J=") }
+        XCTAssertEqual(jog, "$J=G91 G21 X10.000 Y5.000 F1000.000\n")
+        XCTAssertFalse(jog?.contains("X-") == true, "host must not double-apply $3 invert")
+        client.disconnect()
+    }
+
     func testCoordinatorHomeXYBlockedWhenStreaming() throws {
         let transport = MockTransport()
         let client = GRBLClient(transport: transport)

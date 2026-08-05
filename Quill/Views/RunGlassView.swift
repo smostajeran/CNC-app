@@ -41,10 +41,24 @@ struct RunGlassView: View {
                     title: "Machine is locked",
                     message: model.isUnlocking
                         ? "Clearing Alarm…"
-                        : "ALARM:3 usually means Emergency Stop or Soft reset during motion. Tap Unlock ($X) — do not Soft reset again first.",
+                        : "ALARM:3 usually means Emergency Stop or Soft reset during motion. Tap Unlock ($X) — do not Soft reset again first. Then Home X/Y before Start.",
                     tone: .danger,
                     actionTitle: model.isUnlocking ? nil : "Unlock",
                     onAction: model.isUnlocking ? nil : { model.unlock() }
+                )
+                .padding(.horizontal, 28)
+            } else if !model.xyHomedThisSession {
+                HelpCard(
+                    title: "Home required before Start",
+                    message: "Start is blocked until Move → Home X/Y finishes at Idle. Without a trusted origin the gantry can run off the open end of the bed.",
+                    tone: .danger
+                )
+                .padding(.horizontal, 28)
+            } else if !model.machine.softLimitsEnabled {
+                HelpCard(
+                    title: "Soft limits required before Start",
+                    message: "Enable soft limits ($20) in Calibrate after Homing so travel cannot exceed $130/$131.",
+                    tone: .danger
                 )
                 .padding(.horizontal, 28)
             }

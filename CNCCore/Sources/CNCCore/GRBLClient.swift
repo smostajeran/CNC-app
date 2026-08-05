@@ -165,17 +165,18 @@ public final class GRBLClient: @unchecked Sendable {
         try softReset()
     }
 
+    /// Jog in the UI sense (+X = right, +Y = up on the bed preview).
+    /// Direction invert is applied only by GRBL `$3` — never also in software.
+    /// (Host-side negation while `$3` is set made jog look correct but sent Start jobs the opposite way.)
     public func jog(dx: Double, dy: Double, dz: Double = 0, feed: Double, machine: MachineProfile) throws {
-        let x = machine.invertX ? -dx : dx
-        let y = machine.invertY ? -dy : dy
-        let z = machine.invertZ ? -dz : dz
-        // GRBL 1.1 jogging
+        // `machine` kept for API stability; jog feed is passed explicitly by callers.
         var parts = ["$J=G91 G21"]
-        if x != 0 { parts.append("X\(fmt(x))") }
-        if y != 0 { parts.append("Y\(fmt(y))") }
-        if z != 0 { parts.append("Z\(fmt(z))") }
+        if dx != 0 { parts.append("X\(fmt(dx))") }
+        if dy != 0 { parts.append("Y\(fmt(dy))") }
+        if dz != 0 { parts.append("Z\(fmt(dz))") }
         parts.append("F\(fmt(feed))")
         try sendLine(parts.joined(separator: " "))
+        _ = machine
     }
 
     public func penUp(_ machine: MachineProfile) throws {
