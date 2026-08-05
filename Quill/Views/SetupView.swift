@@ -83,7 +83,7 @@ struct SetupView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Workspace \(Int(model.machine.travelX)) × \(Int(model.machine.travelY)) mm")
                                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                            Text("Pen lift heights: up \(fmt(model.machine.penUpZ)) mm · down \(fmt(model.machine.penDownZ)) mm")
+                            Text("Pen lift (Bachin motor-pen): up \(fmt(model.machine.penUpZ)) mm · down \(fmt(model.machine.penDownZ)) mm — aim for ≤5 mm gap when raised (Move to adjust).")
                                 .font(Theme.captionFont)
                                 .foregroundStyle(.secondary)
                             if let build = model.machine.buildInfo, !build.isEmpty {

@@ -35,7 +35,7 @@ Host PC / Android  --USB serial G-code-->  ATmega328P Nano + GRBL 1.1f
 | Z / tool | **Motor pen lift** (Bachin Draw: *Pen Writing Machine with Motor*, same family as ST-2039). Not the T-2039 servo-pen variant |
 | Accuracy | Marketing: 0.01 mm; sibling T-2039 wiki: ~0.2–0.3 mm practical |
 | Pen | Standard pens/markers; diameter ~**12 mm** (listings often mistranslate as 12 cm) |
-| Pen height tip | Pen up ~3–5 mm above paper; software pen-down ~2–5, up/down range 0–8 |
+| Pen height tip | Official Bachin motor-pen guide: raised tip gap **≤ 5 mm** above paper; host fields often show “Pen up 0 / Pen down 2–5” (their UI). **Quill/GRBL** uses Z-up: default **penUpZ = 5**, **penDownZ = 0**, clamp **0–8** |
 | Power | **DC 12V** adapter; AC **100–240V**; this unit is **UK plug** |
 | Host OS (official) | Windows (+ Android handwriting sync app) |
 | Files | PNG, JPEG, JPG, BMP, SVG, DXF, G-code |

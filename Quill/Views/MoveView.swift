@@ -99,15 +99,27 @@ struct MoveView: View {
                                     .font(Theme.captionFont)
                                     .foregroundStyle(.secondary)
                                 DisclosureGroup("Pen heights (mm)") {
-                                    HStack {
-                                        Text("Up")
-                                        TextField("", value: $model.machine.penUpZ, format: .number)
-                                            .frame(width: 56)
-                                        Text("Down")
-                                        TextField("", value: $model.machine.penDownZ, format: .number)
-                                            .frame(width: 56)
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text("Bachin motor-pen guide (T-A4): up gap ≤ 5 mm above paper; down lightly on the page. Quill uses GRBL Z — higher lifts the pen (typical up 5, down 0). Range 0–8.")
+                                            .font(Theme.captionFont)
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        HStack {
+                                            Text("Up")
+                                            TextField("", value: $model.machine.penUpZ, format: .number)
+                                                .frame(width: 56)
+                                                .onSubmit { model.clampPenHeightsToBachinRange() }
+                                            Text("Down")
+                                            TextField("", value: $model.machine.penDownZ, format: .number)
+                                                .frame(width: 56)
+                                                .onSubmit { model.clampPenHeightsToBachinRange() }
+                                        }
+                                        .font(Theme.captionFont)
+                                        Button("Use recommended (up 5 · down 0)") {
+                                            model.applyRecommendedPenHeights()
+                                        }
+                                        .font(Theme.captionFont)
                                     }
-                                    .font(Theme.captionFont)
                                     .padding(.top, 6)
                                 }
                                 .font(Theme.captionFont)
