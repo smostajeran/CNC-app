@@ -20,9 +20,10 @@ struct CalibrationWizardView: View {
     @State private var travelY: Double = MachineProfile.conservativeTravelY
     @State private var measuringAxis: CalibrationAxis = .x
     @State private var travelStep: Double = 10
+    @State private var enableSoftLimits = false
     @State private var enableHardLimits = false
-    @State private var measuredX: String = "100"
-    @State private var measuredY: String = "100"
+    @State private var measuredX: String = "50"
+    @State private var measuredY: String = "50"
     @State private var scaleApplied = false
     @State private var oversizeRejected = false
     @State private var boundaryReady = false
@@ -433,10 +434,20 @@ struct CalibrationWizardView: View {
 
             Toggle("Both axes sought the switches correctly (not the open end)", isOn: $homingStarted)
                 .disabled(!model.canCalibrateMotion)
+
+            if model.isAlarm {
+                HelpCard(
+                    title: "Locked after Home",
+                    message: "Unlock, flip the home direction for the axis that ran away, park mid-bed, then try Home again. Do not enable soft limits yet.",
+                    tone: .danger,
+                    actionTitle: "Unlock",
+                    onAction: { model.unlock() }
+                )
+            }
         }
         .onAppear {
-            // Refresh $$ so $23 matches the controller before the user homes.
-            model.probe()
+            // Light $$ only — never soft-reset inside the wizard (that leaves the machine wedged).
+            model.refreshControllerSettingsLight()
         }
     }
 
@@ -504,29 +515,38 @@ struct CalibrationWizardView: View {
     private var limitsStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             stepTitle(
-                "Enable software limits",
-                "Write safe travel to $130/$131, enable homing ($22), then soft limits ($20). Enable $20 only after homing works. Soft limits need a valid machine position — home again after every restart."
+                "Safe travel on the controller",
+                "Write measured max travel to $130/$131 and keep homing enabled ($22). Leave soft limits ($20) off until Home reliably finds the switches — turning $20 on without a valid home makes every move Alarm and the machine look dead."
             )
             motionGateBanner
-            Text(String(format: "Will write $130=%.0f  $131=%.0f  $22=1  $20=1", travelX, travelY))
-                .font(.system(.body, design: .monospaced))
+            HelpCard(
+                title: "Soft limits are optional here",
+                message: "Default is off. Enable $20 only after a successful Home in this session. You must Home again after every power cycle if $20 is on.",
+                tone: .caution
+            )
+            Text(String(
+                format: "Will write $130=%.0f  $131=%.0f  $22=1  $20=%d",
+                travelX, travelY, enableSoftLimits ? 1 : 0
+            ))
+            .font(.system(.body, design: .monospaced))
+            Toggle("Enable soft limits ($20=1) — only if Home just succeeded", isOn: $enableSoftLimits)
             Toggle("Also enable hard limits ($21=1) — optional", isOn: $enableHardLimits)
-            Button("Write travel + enable limits") {
+            Button(enableSoftLimits ? "Write travel + soft limits" : "Write travel (soft limits off)") {
                 model.enableHomingSetting()
                 model.applySafeTravelAndLimits(
                     travelX: travelX,
                     travelY: travelY,
-                    enableSoftLimits: true,
+                    enableSoftLimits: enableSoftLimits,
                     enableHardLimits: enableHardLimits
                 )
             }
             .buttonStyle(.borderedProminent)
             .tint(Theme.steel)
-            .disabled(!model.canCalibrateMotion)
+            .disabled(!model.canCalibrateMotion || !homingStarted)
             if model.machine.softLimitsEnabled {
                 HelpCard(
                     title: "Soft limits on",
-                    message: "Home X/Y after every power cycle before plotting. Soft limits are meaningless until the controller knows where home is.",
+                    message: "Home X/Y after every power cycle before plotting. If the machine locks, Unlock and turn $20 off in Advanced until homing is solid.",
                     tone: .ok
                 )
             }
@@ -589,18 +609,23 @@ struct CalibrationWizardView: View {
         VStack(alignment: .leading, spacing: 14) {
             stepTitle(
                 "Accuracy test",
-                "Command 100 mm on X and Y (pen can mark or you measure travel). If scaling is wrong: new_steps = old × commanded ÷ measured."
+                "Command 50 mm on X and Y, measure, then correct steps/mm: new = old × commanded ÷ measured."
             )
             motionGateBanner
+            HelpCard(
+                title: "Stay clear of the open end",
+                message: "Use 50 mm test moves (not full-bed). If the head approaches a hard stop, E-Stop. Soft limits should still be off unless Home is proven.",
+                tone: .caution
+            )
             HStack(spacing: 10) {
                 Button("Pen up") { model.penUp() }
-                Button("Move X 100 mm") {
-                    model.jogStep = 100
-                    model.jog(dx: 100, dy: 0)
+                Button("Move X 50 mm") {
+                    model.jogStep = 50
+                    model.jog(dx: 50, dy: 0)
                 }
-                Button("Move Y 100 mm") {
-                    model.jogStep = 100
-                    model.jog(dx: 0, dy: 100)
+                Button("Move Y 50 mm") {
+                    model.jogStep = 50
+                    model.jog(dx: 0, dy: 50)
                 }
             }
             .disabled(!model.canCalibrateMotion)
@@ -610,7 +635,7 @@ struct CalibrationWizardView: View {
                     .frame(width: 64)
                 Button("Apply X steps/mm") {
                     if let m = Double(measuredX) {
-                        model.applyDistanceCalibration(axis: .x, commandedMm: 100, measuredMm: m)
+                        model.applyDistanceCalibration(axis: .x, commandedMm: 50, measuredMm: m)
                         scaleApplied = true
                     }
                 }
@@ -621,7 +646,7 @@ struct CalibrationWizardView: View {
                     .frame(width: 64)
                 Button("Apply Y steps/mm") {
                     if let m = Double(measuredY) {
-                        model.applyDistanceCalibration(axis: .y, commandedMm: 100, measuredMm: m)
+                        model.applyDistanceCalibration(axis: .y, commandedMm: 50, measuredMm: m)
                         scaleApplied = true
                     }
                 }
@@ -782,7 +807,10 @@ struct CalibrationWizardView: View {
         case .travel:
             return model.canCalibrateMotion && travelX > 10 && travelY > 10
         case .limits:
-            return model.machine.softLimitsEnabled && model.machine.homingEnabled
+            // Travel write is enough; soft limits stay optional so we don't brick motion.
+            return model.machine.homingEnabled
+                && abs(model.machine.travelX - travelX) < 0.6
+                && abs(model.machine.travelY - travelY) < 0.6
         case .pen:
             return true
         case .accuracy:
@@ -809,7 +837,7 @@ struct CalibrationWizardView: View {
         case .homing:
             return homingStarted ? nil : "Run Home X/Y, then check “Both axes homed correctly”."
         case .limits:
-            return "Tap “Write travel + enable limits” before continuing."
+            return "Tap “Write travel…” after a successful Home (soft limits optional)."
         case .accuracy:
             return scaleApplied ? nil : "Apply X/Y steps or check “Scale checked”."
         case .safety:

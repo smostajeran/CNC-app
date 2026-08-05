@@ -199,6 +199,17 @@ public final class GRBLClient: @unchecked Sendable {
         return result
     }
 
+    /// Read `$$` only — no soft-reset. Safe during an open calibration wizard.
+    public func readSettings() throws -> [String: Double] {
+        stopPolling()
+        defer { startPolling() }
+        _ = try drain(timeout: 0.15)
+        try sendLine("$$")
+        let text = try collectUntilOk(timeout: 3.0)
+        appendConsole(text)
+        return GRBLProbeResult.parseSettings(text)
+    }
+
     // MARK: - Internals
 
     private func startPolling() {

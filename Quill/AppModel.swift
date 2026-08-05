@@ -346,11 +346,23 @@ final class AppModel: ObservableObject {
             lastError = "Paper size must be larger than 10 mm."
             return
         }
-        machine.travelX = widthMm
-        machine.travelY = heightMm
+        // Keep machine travel at least as large as the paper (never shrink below paper).
+        machine.travelX = max(machine.travelX, widthMm)
+        machine.travelY = max(machine.travelY, heightMm)
+        // Prefer a matching Compose page format so A4 actually becomes selectable.
+        if let match = PageFormat.presets.first(where: {
+            abs($0.widthMm - widthMm) < 0.6 && abs($0.heightMm - heightMm) < 0.6 && $0.fits(on: machine)
+        }) {
+            setPageFormat(match)
+        } else if PageFormat.custom(widthMm: widthMm, heightMm: heightMm).fits(on: machine) {
+            setPageFormat(.custom(widthMm: widthMm, heightMm: heightMm))
+        }
         persistMachine()
         guard writeToController else {
-            calibrationNote = String(format: "Drawing area set to %.0f × %.0f mm in Quill.", widthMm, heightMm)
+            calibrationNote = String(
+                format: "Paper %.0f × %.0f mm set in Quill (Compose). Soft-limit travel left unchanged on the controller.",
+                widthMm, heightMm
+            )
             return
         }
         guard isConnected else {
@@ -358,14 +370,67 @@ final class AppModel: ObservableObject {
             return
         }
         do {
-            try coordinator.applyTravelLimits(x: widthMm, y: heightMm)
-            console.append(String(format: "--- Soft limits $130/$131 = %.1f × %.1f ---", widthMm, heightMm))
+            // Only write max travel — do not enable $20 here (soft limits need a valid home).
+            try coordinator.applyTravelLimits(x: machine.travelX, y: machine.travelY)
+            console.append(String(
+                format: "--- Soft-limit max travel $130/$131 = %.1f × %.1f ( $20 not changed ) ---",
+                machine.travelX, machine.travelY
+            ))
             calibrationNote = String(
-                format: "Drawing area %.0f × %.0f mm saved in Quill and on the machine.",
-                widthMm, heightMm
+                format: "Paper %.0f × %.0f mm in Quill. Controller max travel %.0f × %.0f mm. Soft limits ($20) stay off until Homing succeeds in the wizard.",
+                widthMm, heightMm, machine.travelX, machine.travelY
             )
         } catch {
             lastError = error.localizedDescription
+        }
+    }
+
+    /// Apply a Compose page format that fits the bed (e.g. A4 landscape on TA-4).
+    func applyPageFormatPreset(_ format: PageFormat, writeTravelToController: Bool) {
+        // Ensure travel can host the paper (TA-4 A4 preset is 297×200).
+        machine.travelX = max(machine.travelX, format.widthMm)
+        machine.travelY = max(machine.travelY, format.heightMm)
+        persistMachine()
+        guard format.fits(on: machine) else {
+            lastError = String(
+                format: "“%@” (%.0f×%.0f mm) does not fit the %.0f×%.0f mm bed. On a TA-4 use A4 landscape (297×200), not ISO 297×210.",
+                format.name, format.widthMm, format.heightMm, machine.travelX, machine.travelY
+            )
+            return
+        }
+        setPageFormat(format)
+        if writeTravelToController {
+            applyPaperSize(
+                widthMm: format.widthMm,
+                heightMm: format.heightMm,
+                writeToController: true
+            )
+        } else {
+            calibrationNote = String(
+                format: "Paper set to %@ (%.0f×%.0f mm) for Compose.",
+                format.name, format.widthMm, format.heightMm
+            )
+        }
+    }
+
+    /// Refresh `$` settings without soft-reset (safe inside the calibration wizard).
+    func refreshControllerSettingsLight() {
+        guard isConnected else { return }
+        let coordinator = self.coordinator
+        Task.detached(priority: .userInitiated) {
+            do {
+                let settings = try coordinator.readSettings()
+                await MainActor.run {
+                    self.machine.applyGRBLSettings(settings)
+                    self.persistMachine()
+                    self.console.append("--- Settings refreshed (no soft-reset) ---")
+                }
+            } catch {
+                await MainActor.run {
+                    // Non-fatal during wizard — avoid modal spam.
+                    self.console.append("--- Settings refresh failed: \(error.localizedDescription) ---")
+                }
+            }
         }
     }
 
@@ -864,6 +929,9 @@ final class AppModel: ObservableObject {
             .replacingOccurrences(of: "-landscape", with: "")
         if let match = candidates.first(where: { $0.id == base + "-landscape" }) {
             return match
+        }
+        if let a4 = candidates.first(where: { $0.id == "a4-on-ta4" }) {
+            return a4
         }
         if let a5 = candidates.first(where: { $0.id == "a5-landscape" }) {
             return a5

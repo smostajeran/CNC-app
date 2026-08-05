@@ -14,8 +14,16 @@ public struct PageFormat: Equatable, Sendable, Codable, Identifiable, Hashable {
         self.heightMm = heightMm
     }
 
-    public static let a4Portrait = PageFormat(id: "a4-portrait", name: "A4 portrait", widthMm: 210, heightMm: 297)
-    public static let a4Landscape = PageFormat(id: "a4-landscape", name: "A4 landscape", widthMm: 297, heightMm: 210)
+    public static let a4Portrait = PageFormat(id: "a4-portrait", name: "A4 portrait (ISO)", widthMm: 210, heightMm: 297)
+    /// Full ISO A4 landscape — does **not** fit a stock TA-4 bed (200 mm deep).
+    public static let a4Landscape = PageFormat(id: "a4-landscape", name: "A4 landscape (ISO)", widthMm: 297, heightMm: 210)
+    /// Practical A4 sheet on a TA-4 (~390×200 mm bed): ISO width, bed-safe height.
+    public static let a4OnTA4Bed = PageFormat(
+        id: "a4-on-ta4",
+        name: "A4 landscape",
+        widthMm: 297,
+        heightMm: 200
+    )
     public static let a5Portrait = PageFormat(id: "a5-portrait", name: "A5 portrait", widthMm: 148, heightMm: 210)
     public static let a5Landscape = PageFormat(id: "a5-landscape", name: "A5 landscape", widthMm: 210, heightMm: 148)
     public static let envelopeDL = PageFormat(id: "envelope-dl", name: "Envelope DL", widthMm: 220, heightMm: 110)
@@ -24,8 +32,9 @@ public struct PageFormat: Equatable, Sendable, Codable, Identifiable, Hashable {
     public static let fullBed = PageFormat(id: "full-bed", name: "Full bed", widthMm: 390, heightMm: 200)
 
     public static let presets: [PageFormat] = [
-        .a4Landscape, .a4Portrait, .a5Landscape, .a5Portrait,
-        .envelopeDL, .invitation, .placeCard, .fullBed,
+        .a4OnTA4Bed, .a5Landscape, .a5Portrait, .fullBed,
+        .envelopeDL, .invitation, .placeCard,
+        .a4Landscape, .a4Portrait,
     ]
 
     public static func custom(widthMm: Double, heightMm: Double) -> PageFormat {

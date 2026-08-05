@@ -297,9 +297,10 @@ final class PrecisionComposerCorrectionsTests: XCTestCase {
     }
 
     func testPortraitA4DoesNotFitTA4Bed() {
-        // TA-4 bed is 390×200 mm — A4 portrait (210×297) and A4 landscape (297×210) both exceed height.
+        // TA-4 bed is 390×200 mm — ISO A4 exceeds height; bed-fit A4 (297×200) is OK.
         XCTAssertFalse(PageFormat.a4Portrait.fits(on: .ta4))
         XCTAssertFalse(PageFormat.a4Landscape.fits(on: .ta4))
+        XCTAssertTrue(PageFormat.a4OnTA4Bed.fits(on: .ta4))
         XCTAssertTrue(PageFormat.a5Landscape.fits(on: .ta4))
         var page = PageDocument(format: .a4Portrait, bedOriginX: 0, bedOriginY: 0)
         page.elements = [

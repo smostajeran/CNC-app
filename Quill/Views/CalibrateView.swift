@@ -5,10 +5,7 @@ struct CalibrateView: View {
     @EnvironmentObject private var model: AppModel
     var onContinue: () -> Void
 
-    @State private var showQuickAdjust = false
-    @State private var widthMm: Double = 390
-    @State private var heightMm: Double = 200
-    @State private var writeLimits = true
+    @State private var writeTravel = false
 
     var body: some View {
         ScrollView {
@@ -17,7 +14,7 @@ struct CalibrateView: View {
                     Text("Calibrate")
                         .font(Theme.stepTitleFont)
                         .foregroundStyle(Theme.ink)
-                    Text("Run the controlled wizard so power, direction, end stops, homing, travel, and pen height are proven before you draw.")
+                    Text("Set your paper for Compose, then run the wizard only when you need to commission motors, switches, and travel.")
                         .font(Theme.bodyFont)
                         .foregroundStyle(Theme.inkMuted)
                 }
@@ -25,35 +22,59 @@ struct CalibrateView: View {
                 if !model.isConnected {
                     HelpCard(
                         title: "Connect first",
-                        message: "Finish Setup, confirm 12 V power, then start the calibration wizard.",
+                        message: "Finish Setup, confirm 12 V power, then choose paper or open the wizard.",
                         tone: .caution
+                    )
+                } else if model.isAlarm {
+                    HelpCard(
+                        title: "Machine locked",
+                        message: "Unlock before jogging or homing. Soft limits ($20) or a failed Home often cause this — E-Stop, Unlock, then continue carefully.",
+                        tone: .danger,
+                        actionTitle: "Unlock",
+                        onAction: { model.unlock() }
                     )
                 } else if !model.motorsPowerConfirmed {
                     HelpCard(
                         title: "Confirm motor power",
-                        message: "USB can show Connected without powering the motors. The wizard blocks motion steps until you confirm regulated 12 V and the POWER LED.",
-                        tone: .caution
+                        message: "USB can show Connected without powering the motors. Confirm 12 V before any motion in the wizard.",
+                        tone: .caution,
+                        actionTitle: "Motors powered",
+                        onAction: { model.confirmMotorsPowered(true) }
                     )
                 }
 
+                // --- Paper (primary) ---
                 GlassPanel(tint: Theme.steel.opacity(0.12)) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Controlled calibration wizard", systemImage: "list.number")
+                        Label("Paper size (Compose)", systemImage: "doc.plaintext")
                             .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        Text("Power → pen head → direction → end stops → homing → safe travel → limits → pen → accuracy → boundary/oversize → save profile.")
+                        Text("TA-4 bed is about 390×200 mm. Full ISO A4 landscape (297×210) is taller than the bed — use A4 landscape (297×200) below.")
                             .font(Theme.captionFont)
                             .foregroundStyle(Theme.inkMuted)
-                        if model.machine.commissioningComplete {
-                            Text("A completed profile is already saved on this Mac — re-run the wizard after hardware changes.")
-                                .font(Theme.captionFont)
-                                .foregroundStyle(Theme.ok)
+
+                        Text("Current: \(model.page.format.name) · \(Int(model.page.format.widthMm))×\(Int(model.page.format.heightMm)) mm")
+                            .font(Theme.captionFont.weight(.semibold))
+                            .foregroundStyle(Theme.ink)
+
+                        HStack(spacing: 10) {
+                            paperButton(PageFormat.a4OnTA4Bed)
+                            paperButton(PageFormat.a5Landscape)
+                            paperButton(PageFormat.fullBed)
                         }
-                        Button("Start calibration wizard…") {
-                            model.setCalibrationWizardOpen(true)
+
+                        Toggle("Also write max travel $130/$131 (does not turn on soft limits)", isOn: $writeTravel)
+                            .font(Theme.captionFont)
+
+                        if !model.pageFitsBed {
+                            HelpCard(
+                                title: "Page does not fit bed",
+                                message: model.pageFitBlockingMessage
+                                    ?? "Choose A4 landscape (297×200) or A5 landscape.",
+                                tone: .caution,
+                                actionTitle: "Use A4 landscape",
+                                onAction: { applyA4() }
+                            )
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Theme.steel)
-                        .disabled(!model.isConnected)
                     }
                 }
 
@@ -71,42 +92,26 @@ struct CalibrateView: View {
                     )
                 }
 
-                DisclosureGroup("Quick paper size (optional)", isExpanded: $showQuickAdjust) {
+                // --- Wizard (secondary, motion-heavy) ---
+                GlassPanel {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("For a full re-commission, use the wizard. These presets only adjust Quill’s drawing area (and optionally $130/$131).")
+                        Label("Machine commissioning wizard", systemImage: "list.number")
+                            .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                        Text("Use only when commissioning: direction, end stops, homing, safe travel. Keep E-Stop ready. Do not enable soft limits ($20) until Home seeks the switches correctly.")
                             .font(Theme.captionFont)
                             .foregroundStyle(Theme.inkMuted)
-                            .padding(.top, 8)
-                        HStack(spacing: 10) {
-                            quickPreset("Full bed", w: 390, h: 200)
-                            quickPreset("A4 landscape", w: 297, h: 200)
-                            quickPreset(
-                                "Conservative",
-                                w: MachineProfile.conservativeTravelX,
-                                h: MachineProfile.conservativeTravelY
-                            )
+                        Button("Start calibration wizard…") {
+                            model.setCalibrationWizardOpen(true)
                         }
-                        HStack(spacing: 16) {
-                            labeledField("Width mm", value: $widthMm)
-                            labeledField("Height mm", value: $heightMm)
-                        }
-                        Toggle("Also write soft-limit max travel ($130 / $131)", isOn: $writeLimits)
-                            .font(Theme.captionFont)
-                        Button("Save paper size") {
-                            model.applyPaperSize(
-                                widthMm: widthMm,
-                                heightMm: heightMm,
-                                writeToController: writeLimits
-                            )
-                        }
-                        .disabled(!model.isConnected && writeLimits)
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.steel)
+                        .disabled(!model.isConnected)
                     }
                 }
-                .font(Theme.captionFont)
 
                 HStack {
                     Spacer()
-                    Button("Continue to Draw") { onContinue() }
+                    Button("Continue to Compose / Draw") { onContinue() }
                         .buttonStyle(.borderedProminent)
                         .tint(Theme.steel)
                 }
@@ -115,27 +120,20 @@ struct CalibrateView: View {
             .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .onAppear {
-            widthMm = model.machine.travelX
-            heightMm = model.machine.travelY
-        }
     }
 
-    private func quickPreset(_ title: String, w: Double, h: Double) -> some View {
-        Button(title) {
-            widthMm = w
-            heightMm = h
+    private func paperButton(_ format: PageFormat) -> some View {
+        let selected = model.page.format.id == format.id
+        return Button(format.name) {
+            model.applyPageFormatPreset(format, writeTravelToController: writeTravel)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.borderedProminent)
+        .tint(selected ? Theme.ok : Theme.steel)
+        .disabled(!format.fits(on: model.machine) && format.id != PageFormat.a4OnTA4Bed.id)
+        .help("\(Int(format.widthMm))×\(Int(format.heightMm)) mm")
     }
 
-    private func labeledField(_ title: String, value: Binding<Double>) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.inkMuted)
-            TextField("", value: value, format: .number)
-                .frame(width: 100)
-        }
+    private func applyA4() {
+        model.applyPageFormatPreset(.a4OnTA4Bed, writeTravelToController: writeTravel)
     }
 }

@@ -201,6 +201,12 @@ public final class CommandCoordinator: @unchecked Sendable {
         return try client.probe()
     }
 
+    /// Settings dump without soft-reset or busy-state change (works while calibrating).
+    public func readSettings() throws -> [String: Double] {
+        try requireManual()
+        return try client.readSettings()
+    }
+
     // MARK: - Internals
 
     private func requireManual() throws {
