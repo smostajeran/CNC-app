@@ -14,7 +14,7 @@ struct ComposeGlassView: View {
                         .foregroundStyle(Theme.ink)
                     Text("Lay out a true-size page on the bed — artwork, text, pens, and batch data.")
                         .font(Theme.bodyFont)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.inkMuted)
                 }
                 Spacer()
                 HStack(spacing: 8) {

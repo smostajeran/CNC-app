@@ -4,6 +4,9 @@ import CNCCore
 /// Run mode: job, preflight, Frame, Hold/Resume/Stop — Liquid Glass chrome.
 struct RunGlassView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var confirmStart = false
+
+    private var hasJob: Bool { !model.jobText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -14,7 +17,7 @@ struct RunGlassView: View {
                         .foregroundStyle(Theme.ink)
                     Text("Preflight, frame the page with the pen raised, then plot. Keep clear of the moving carriage.")
                         .font(Theme.bodyFont)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.inkMuted)
                 }
                 Spacer()
                 GlassChip(tint: Theme.steel.opacity(0.2)) {
@@ -25,6 +28,24 @@ struct RunGlassView: View {
             }
             .padding(.horizontal, 28)
             .padding(.top, 24)
+
+            if !model.isConnected {
+                HelpCard(
+                    title: "Connect first",
+                    message: "Finish Setup before framing or starting a job.",
+                    tone: .caution
+                )
+                .padding(.horizontal, 28)
+            } else if model.isAlarm {
+                HelpCard(
+                    title: "Machine is locked",
+                    message: "Unlock before Preflight, Frame, or Start.",
+                    tone: .danger,
+                    actionTitle: "Unlock",
+                    onAction: { model.unlock() }
+                )
+                .padding(.horizontal, 28)
+            }
 
             HStack(alignment: .top, spacing: 16) {
                 GlassPanel(tint: Theme.steel.opacity(0.1), padding: 18) {
@@ -37,26 +58,30 @@ struct RunGlassView: View {
                         if let report = model.preflightReport {
                             Text("ETA \(report.estimatedRuntimeLabel) · \(report.parse.penChangeCount) pen change(s)")
                                 .font(Theme.captionFont)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Theme.inkMuted)
                             ForEach(report.issues.prefix(5)) { issue in
                                 Text("• \(issue.message)")
                                     .font(.caption2)
                                     .foregroundStyle(
                                         issue.severity == .error ? Theme.danger
-                                            : (issue.severity == .warning ? Theme.caution : .secondary)
+                                            : (issue.severity == .warning ? Theme.caution : Theme.inkMuted)
                                     )
                             }
                         }
 
                         HStack(spacing: 8) {
                             Button("Preflight") { model.runPreflight() }
-                                .disabled(model.jobText.isEmpty)
+                                .disabled(!hasJob)
                             Button("Frame") { model.framePage() }
-                                .disabled(!model.isConnected || model.composedPage == nil && model.jobText.isEmpty || !model.allowsManualCommands)
-                            Button("Start") { model.startJob() }
+                                .disabled(
+                                    !model.isConnected
+                                        || (!hasJob && model.composedPage == nil)
+                                        || !model.allowsManualCommands
+                                )
+                            Button("Start") { confirmStart = true }
                                 .buttonStyle(.borderedProminent)
                                 .tint(Theme.steel)
-                                .disabled(!model.isConnected || model.jobText.isEmpty)
+                                .disabled(!model.isConnected || !hasJob)
                             Button("Hold") { model.pauseJob() }
                             Button("Resume") { model.resumeJob() }
                             Button("Stop", role: .destructive) { model.cancelJob() }
@@ -67,7 +92,7 @@ struct RunGlassView: View {
                             model.status.mpos.x, model.status.mpos.y, model.status.mpos.z
                         ))
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.inkMuted)
 
                         if !model.batch.pages.isEmpty {
                             Divider()
@@ -80,19 +105,49 @@ struct RunGlassView: View {
                 }
                 .frame(width: 360)
 
-                PathPreviewView(job: model.previewJob, workspace: model.machine)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .quillGlass(shape: .rect(cornerRadius: 18))
+                Group {
+                    if hasJob {
+                        PathPreviewView(job: model.previewJob, workspace: model.machine)
+                    } else {
+                        VStack(spacing: 14) {
+                            Image(systemName: "play.circle")
+                                .font(.system(size: 36, weight: .light, design: .rounded))
+                                .foregroundStyle(Theme.steel)
+                            Text("Nothing to run")
+                                .font(.system(.title3, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Theme.ink)
+                            Text("Compose a page or open a drawing in Draw, then return here to preflight and plot.")
+                                .font(Theme.bodyFont)
+                                .foregroundStyle(Theme.inkMuted)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 320)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(28)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .quillGlass(shape: .rect(cornerRadius: 18))
             }
             .padding(.horizontal, 28)
             .padding(.bottom, 20)
+        }
+        .confirmationDialog(
+            "Start plotting now?",
+            isPresented: $confirmStart,
+            titleVisibility: .visible
+        ) {
+            Button("Start job") { model.startJob() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Preflight runs first. Keep hands clear of the carriage and rails.")
         }
     }
 
     private var streamLabel: String {
         switch model.streamState {
-        case .idle: return "Ready — run Preflight, then Start"
+        case .idle: return hasJob ? "Ready — run Preflight, then Start" : "Load a job from Draw or Compose"
         case .running: return String(format: "Streaming %.0f%% (acked)", model.streamProgress * 100)
         case .paused: return "Hold"
         case .waitingForPenChange: return "Waiting for pen change — Resume after swap"

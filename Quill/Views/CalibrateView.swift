@@ -30,7 +30,7 @@ struct CalibrateView: View {
                         .foregroundStyle(Theme.ink)
                     Text("Match Quill to your paper so drawings land where you expect.")
                         .font(Theme.bodyFont)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.inkMuted)
                 }
 
                 if !model.isConnected {
@@ -46,8 +46,15 @@ struct CalibrateView: View {
                 if let note = model.calibrationNote {
                     HelpCard(
                         title: "Saved",
-                        message: note,
+                        message: note + (phase == .scale
+                            ? " Next: open a drawing in Draw, or continue below."
+                            : " Tap Next to continue calibration."),
                         tone: .ok,
+                        actionTitle: phase == .scale ? "Continue to Draw" : "Next",
+                        onAction: {
+                            model.calibrationNote = nil
+                            if phase == .scale { onContinue() } else { goNext() }
+                        },
                         onDismiss: { model.calibrationNote = nil }
                     )
                 }
@@ -103,7 +110,7 @@ struct CalibrateView: View {
                             .padding(.vertical, 8)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(phase == item ? Theme.ink : .secondary)
+                    .foregroundStyle(phase == item ? Theme.ink : Theme.inkMuted)
                     .quillGlass(
                         tint: phase == item ? Theme.steelBright.opacity(0.4) : nil,
                         shape: .capsule

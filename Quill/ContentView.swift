@@ -23,6 +23,19 @@ enum HobbyistStep: String, CaseIterable, Identifiable {
         case .advanced: return "wrench.and.screwdriver"
         }
     }
+
+    /// Flow order for the hobbyist path (Advanced is unnumbered).
+    var stepNumber: Int? {
+        switch self {
+        case .setup: return 1
+        case .move: return 2
+        case .calibrate: return 3
+        case .draw: return 4
+        case .compose: return 5
+        case .run: return 6
+        case .advanced: return nil
+        }
+    }
 }
 
 struct ContentView: View {
@@ -136,7 +149,7 @@ struct ContentView: View {
                     .foregroundStyle(Theme.ink)
                 Text(Theme.brandSubtitle)
                     .font(Theme.captionFont)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.inkMuted)
             }
             Spacer()
             connectionChip
@@ -145,18 +158,28 @@ struct ContentView: View {
 
     private var connectionChip: some View {
         let connected = model.isConnected
-        return GlassChip(tint: (connected ? Theme.ok : Theme.steel).opacity(0.3)) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(connected ? (model.isAlarm ? Theme.danger : Theme.ok) : Color.secondary)
-                    .frame(width: 8, height: 8)
-                Text(connected ? (model.isAlarm ? "Locked" : "Connected") : "Offline")
-                    .font(Theme.captionFont.weight(.semibold))
-                if connected {
-                    Text(String(format: "%.0f, %.0f", model.status.mpos.x, model.status.mpos.y))
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
+        let alarm = connected && model.isAlarm
+        return HStack(spacing: 8) {
+            GlassChip(tint: (alarm ? Theme.danger : (connected ? Theme.ok : Theme.steel)).opacity(0.3)) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(connected ? (alarm ? Theme.danger : Theme.ok) : Theme.inkMuted)
+                        .frame(width: 8, height: 8)
+                    Text(connected ? (alarm ? "Locked" : "Connected") : "Offline")
+                        .font(Theme.captionFont.weight(.semibold))
+                    if connected {
+                        Text(String(format: "%.0f, %.0f", model.status.mpos.x, model.status.mpos.y))
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(Theme.inkMuted)
+                    }
                 }
+            }
+            if alarm {
+                Button("Unlock") { model.unlock() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.danger)
+                    .controlSize(.small)
+                    .help("Clear the Alarm lock so the machine can move again")
             }
         }
     }
@@ -171,13 +194,25 @@ struct ContentView: View {
                                 step = item
                             }
                         } label: {
-                            Label(item.rawValue, systemImage: item.symbol)
-                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
+                            HStack(spacing: 6) {
+                                if let n = item.stepNumber {
+                                    Text("\(n)")
+                                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                                        .foregroundStyle(step == item ? Theme.ink : Theme.inkMuted)
+                                        .frame(width: 16, height: 16)
+                                        .background(
+                                            Circle()
+                                                .fill(step == item ? Theme.mist : Theme.mist.opacity(0.55))
+                                        )
+                                }
+                                Label(item.rawValue, systemImage: item.symbol)
+                                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(step == item ? Theme.ink : .secondary)
+                        .foregroundStyle(step == item ? Theme.ink : Theme.inkMuted)
                         .quillGlass(
                             tint: step == item ? Theme.steelBright.opacity(0.45) : nil,
                             shape: .capsule

@@ -14,7 +14,7 @@ struct MoveView: View {
                         .foregroundStyle(Theme.ink)
                     Text("Nudge the pen a little so you know power and direction are right before drawing.")
                         .font(Theme.bodyFont)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.inkMuted)
                 }
 
                 if !model.isConnected {
@@ -22,6 +22,14 @@ struct MoveView: View {
                         title: "Connect first",
                         message: "Go back to Setup, choose the USB cable, and tap Connect.",
                         tone: .caution
+                    )
+                } else if model.isAlarm {
+                    HelpCard(
+                        title: "Machine is locked",
+                        message: "Unlock before jogging or Home X/Y. Soft reset in Advanced if Unlock alone does not clear it.",
+                        tone: .danger,
+                        actionTitle: "Unlock",
+                        onAction: { model.unlock() }
                     )
                 }
 
@@ -94,15 +102,15 @@ struct MoveView: View {
                                     .foregroundStyle(Theme.ink)
                                 Text("If nothing moves, check the 12V adapter and blue power switch — USB can connect while motors are off.")
                                     .font(Theme.captionFont)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Theme.inkMuted)
                                 Text("Home X/Y seeks the two end buttons so the controller knows the corner of the bed. After homing, jog to your page corner and set zero in Calibrate.")
                                     .font(Theme.captionFont)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Theme.inkMuted)
                                 DisclosureGroup("Pen heights (mm)") {
                                     VStack(alignment: .leading, spacing: 8) {
                                         Text("Bachin motor-pen guide (T-A4): up gap ≤ 5 mm above paper; down lightly on the page. Quill uses GRBL Z — higher lifts the pen (typical up 5, down 0). Range 0–8.")
                                             .font(Theme.captionFont)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(Theme.inkMuted)
                                             .fixedSize(horizontal: false, vertical: true)
                                         HStack {
                                             Text("Up")

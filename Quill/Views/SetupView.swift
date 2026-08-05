@@ -17,10 +17,11 @@ struct SetupView: View {
                             .foregroundStyle(Theme.steel)
                             .help("Matches Bachin Draw “Pen Writing Machine with Motor” (T-A4). Not servo-pen or laser mode.")
 
-                        Text("1. Plug in the USB cable and the 12V power adapter.\n2. Flip the blue power switch so the board POWER LED is on.\n3. Choose the USB cable below, then Connect.")
-                            .font(Theme.captionFont)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            setupStepRow(1, "Plug in the USB cable and the 12V power adapter.")
+                            setupStepRow(2, "Flip the blue power switch so the board POWER LED is on.")
+                            setupStepRow(3, "Choose the USB cable below, then Connect.")
+                        }
 
                         Picker("USB cable", selection: $model.selectedPort) {
                             Text("None found").tag(String?.none)
@@ -50,6 +51,10 @@ struct SetupView: View {
                                     .keyboardShortcut(.defaultAction)
                                     .buttonStyle(.borderedProminent)
                                     .tint(Theme.steel)
+                                    .disabled(model.selectedPort == nil)
+                                    .help(model.selectedPort == nil
+                                          ? "Choose a USB cable first"
+                                          : "Connect to the plotter")
                             }
                             Button("Check machine") { model.probe() }
                                 .disabled(!model.isConnected)
@@ -71,8 +76,10 @@ struct SetupView: View {
                 if model.isAlarm {
                     HelpCard(
                         title: "Machine is locked (Alarm)",
-                        message: "Open Advanced and tap Unlock, then Soft reset if needed. This is common after a power glitch or hitting an end switch. After unlock, use Move → Home X/Y if you want to re-seek the limit switches.",
-                        tone: .danger
+                        message: "Clear the lock, then Soft reset in Advanced if needed. Common after a power glitch or hitting an end switch. After unlock, use Move → Home X/Y to re-seek the limit switches.",
+                        tone: .danger,
+                        actionTitle: "Unlock",
+                        onAction: { model.unlock() }
                     )
                 }
 
@@ -85,11 +92,11 @@ struct SetupView: View {
                                 .font(.system(.subheadline, design: .rounded).weight(.semibold))
                             Text("Pen lift (Bachin motor-pen): up \(fmt(model.machine.penUpZ)) mm · down \(fmt(model.machine.penDownZ)) mm — aim for ≤5 mm gap when raised (Move to adjust).")
                                 .font(Theme.captionFont)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Theme.inkMuted)
                             if let build = model.machine.buildInfo, !build.isEmpty {
                                 Text(build)
                                     .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(Theme.inkMuted)
                                     .textSelection(.enabled)
                                     .lineLimit(2)
                             }
@@ -115,7 +122,21 @@ struct SetupView: View {
                 .foregroundStyle(Theme.ink)
             Text("Get the plotter talking to your Mac. You only need this once each time you plug in.")
                 .font(Theme.bodyFont)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.inkMuted)
+        }
+    }
+
+    private func setupStepRow(_ n: Int, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("\(n)")
+                .font(.system(.caption2, design: .rounded).weight(.bold))
+                .foregroundStyle(Theme.ink)
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(Theme.mist))
+            Text(text)
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -123,7 +144,7 @@ struct SetupView: View {
     private var statusLine: some View {
         let (label, tone): (String, Color) = {
             switch model.connectionState {
-            case .disconnected: return ("Not connected", .secondary)
+            case .disconnected: return ("Not connected", Theme.inkMuted)
             case .connecting: return ("Connecting…", Theme.steel)
             case .connected:
                 if model.isAlarm { return ("Connected · locked (Alarm)", Theme.danger) }

@@ -617,7 +617,7 @@ struct PageComposerView: View {
             } else {
                 Text("Add content to compose the page")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.inkMuted)
             }
             Spacer()
             Button("Frame Page") { model.framePage() }
@@ -849,7 +849,7 @@ struct PageComposerView: View {
 
     private func metric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(title).font(.caption2).foregroundStyle(Theme.inkMuted)
             Text(value).font(.caption.monospaced())
         }
     }

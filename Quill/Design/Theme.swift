@@ -3,6 +3,8 @@ import SwiftUI
 enum Theme {
     /// Modern minimal greys — soft paper, charcoal ink, cool mid-grey accents.
     static let ink = Color(red: 0.14, green: 0.14, blue: 0.15)
+    /// Secondary copy — warmer than system gray so captions stay on-brand.
+    static let inkMuted = Color(red: 0.42, green: 0.43, blue: 0.45)
     static let steel = Color(red: 0.38, green: 0.39, blue: 0.41)
     static let steelBright = Color(red: 0.52, green: 0.53, blue: 0.55)
     static let mist = Color(red: 0.90, green: 0.90, blue: 0.91)
