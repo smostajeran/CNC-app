@@ -54,7 +54,7 @@ struct ContentView: View {
 
                 if let warning = model.motionWarning {
                     HelpCard(
-                        title: model.noticeTitle,
+                        title: model.noticeTitle ?? "Notice",
                         message: warning,
                         tone: model.noticeTitle == "Emergency stop" || model.noticeTitle == "Machine locked"
                             ? .danger : .caution,

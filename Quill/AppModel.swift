@@ -49,8 +49,8 @@ final class AppModel: ObservableObject {
     }
     @Published var calibrationNote: String?
     @Published var motionWarning: String?
-    /// Title for the top status banner (`motionWarning`).
-    @Published var noticeTitle: String = "Check power"
+    /// Title for the top status banner (`motionWarning`). Cleared with `nil` when dismissed.
+    @Published var noticeTitle: String? = "Check power"
     @Published var confirmFactoryReset = false
     @Published var firmwareAssessment = FirmwareAssessment.assess(buildInfo: "")
     @Published var lastProbeBanner: String = ""

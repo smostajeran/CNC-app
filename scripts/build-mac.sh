@@ -36,7 +36,7 @@ xcodebuild \
   -configuration Debug \
   -derivedDataPath "$ROOT/build/DerivedData" \
   MARKETING_VERSION=1.3 \
-  CURRENT_PROJECT_VERSION=8 \
+  CURRENT_PROJECT_VERSION=9 \
   CODE_SIGN_IDENTITY="-" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=YES \
