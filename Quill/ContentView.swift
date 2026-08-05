@@ -141,7 +141,7 @@ struct ContentView: View {
         .sheet(isPresented: $model.showCalibrationWizard) {
             CalibrationWizardView()
                 .environmentObject(model)
-                .frame(minWidth: 760, minHeight: 520)
+                .frame(minWidth: 860, minHeight: 580)
         }
     }
 

@@ -54,6 +54,8 @@ final class AppModel: ObservableObject {
     @Published var confirmFactoryReset = false
     @Published var firmwareAssessment = FirmwareAssessment.assess(buildInfo: "")
     @Published var lastProbeBanner: String = ""
+    /// Session flag: user confirmed regulated 12 V + controller POWER LED for calibration.
+    @Published var motorsPowerConfirmed = false
 
     @Published var mode: QuillMode = .setup
     @Published var showDiagnostics = false
@@ -261,7 +263,20 @@ final class AppModel: ObservableObject {
         coordinator.endStreaming()
         client.disconnect()
         connectionState = .disconnected
+        motorsPowerConfirmed = false
         updateStatusPolling()
+    }
+
+    /// Calibration and homing must not run on USB-only “connected” without motor power.
+    var canCalibrateMotion: Bool {
+        isConnected && motorsPowerConfirmed && !isAlarm
+    }
+
+    func confirmMotorsPowered(_ confirmed: Bool = true) {
+        motorsPowerConfirmed = confirmed
+        if confirmed {
+            motionWarning = nil
+        }
     }
 
     func updateJobText(_ text: String) {
@@ -398,9 +413,14 @@ final class AppModel: ObservableObject {
 
     /// Drive X and Y to the physical end switches (GRBL `$H`).
     /// Clear paper clips / obstacles first — the gantry will move until both switches click.
+    /// Does not home Z (T-A4 has no Z end stop).
     func homeXY() {
         guard isConnected else {
             lastError = "Connect first"
+            return
+        }
+        guard motorsPowerConfirmed else {
+            lastError = "Confirm 12 V power and the POWER LED before homing. USB can show Connected while motors are unpowered — missed steps make calibration useless."
             return
         }
         guard allowsManualCommands else {
@@ -409,12 +429,103 @@ final class AppModel: ObservableObject {
         }
         do {
             try coordinator.homeXY(machine: machine)
-            console.append("--- Homing X/Y — wait until motion stops at the end switches ---")
-            calibrationNote = "Homing X/Y. Wait until the gantry stops, then set your drawing start corner if needed."
+            console.append("--- Homing X/Y only (pen raised; Z is not homed) — wait until motion stops ---")
+            calibrationNote = "Homing X/Y. Wait until the gantry stops at the switches, then continues."
         } catch {
             lastError = error.localizedDescription
                 + " If homing is disabled on the controller, enable it ($22=1) or home manually with jog."
         }
+    }
+
+    /// Enable GRBL homing (`$22=1`) before the homing test. Soft limits stay off until travel is measured.
+    func enableHomingSetting() {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        do {
+            try coordinator.setSetting("$22", value: 1)
+            machine.homingEnabled = true
+            persistMachine()
+            console.append("--- Homing enabled $22=1 ---")
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Write measured safe travel and enable soft limits (`$20`). Optionally hard limits (`$21`).
+    /// Call only after homing works — soft limits need a valid machine position.
+    func applySafeTravelAndLimits(
+        travelX: Double,
+        travelY: Double,
+        enableSoftLimits: Bool = true,
+        enableHardLimits: Bool = false
+    ) {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        guard travelX > 10, travelY > 10 else {
+            lastError = "Safe travel must be larger than 10 mm."
+            return
+        }
+        do {
+            try coordinator.applyTravelLimits(x: travelX, y: travelY)
+            machine.travelX = travelX
+            machine.travelY = travelY
+            if enableSoftLimits {
+                try coordinator.setSetting("$20", value: 1)
+                machine.softLimitsEnabled = true
+            }
+            if enableHardLimits {
+                try coordinator.setSetting("$21", value: 1)
+                machine.hardLimitsEnabled = true
+            } else {
+                try coordinator.setSetting("$21", value: 0)
+                machine.hardLimitsEnabled = false
+            }
+            persistMachine()
+            console.append(String(
+                format: "--- Safe travel $130=%.1f $131=%.1f · $20=%d $21=%d ---",
+                travelX, travelY,
+                enableSoftLimits ? 1 : 0,
+                enableHardLimits ? 1 : 0
+            ))
+            calibrationNote = String(
+                format: "Safe travel %.0f × %.0f mm saved. Soft limits %@. Home again after every power cycle.",
+                travelX, travelY,
+                enableSoftLimits ? "on" : "off"
+            )
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func flipAxisInvert(_ axis: CalibrationAxis) {
+        switch axis {
+        case .x: machine.invertX.toggle()
+        case .y: machine.invertY.toggle()
+        }
+        persistMachine()
+        applyInvertToController()
+    }
+
+    /// Raised-pen boundary frame + oversize preflight check (must reject before streaming).
+    func runCommissioningSafetyTests() -> (boundaryGCode: String, oversizeRejected: Bool) {
+        let boundary = Commissioning.boundaryFrameGCode(profile: machine)
+        let rejected = Commissioning.oversizeIsRejected(profile: machine)
+        console.append("--- Boundary frame prepared (pen up) ---")
+        console.append(rejected
+            ? "--- Oversize test correctly rejected by preflight ---"
+            : "--- Oversize test FAILED — preflight did not reject ---")
+        return (boundary, rejected)
+    }
+
+    func finishCommissioningProfile() {
+        machine.commissioningComplete = true
+        persistMachine()
+        calibrationNote = "Machine profile saved (head type, travel, direction, steps/mm, limits, pen heights, firmware)."
+        console.append("--- Commissioning complete — profile persisted ---")
     }
 
     func probe() {

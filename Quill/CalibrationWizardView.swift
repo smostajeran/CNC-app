@@ -1,30 +1,53 @@
 import SwiftUI
 import CNCCore
 
-/// Guided wizard: blank paper → mark two points per axis → measure → adjust steps/mm.
+/// Controlled commissioning wizard — power-gated; no motion calibration without 12 V confirmed.
 struct CalibrationWizardView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
-    @State private var step: WizardStep = .intro
-    @State private var axis: CalibrationAxis = .x
-    @State private var commandedMm: Double = 100
-    @State private var measuredText: String = ""
-    @State private var markedStart = false
-    @State private var moved = false
-    @State private var markedEnd = false
-    @State private var xDone = false
-    @State private var yDone = false
+    @State private var step: Step = .power
+    @State private var power12V = false
+    @State private var powerLED = false
+    @State private var xDirectionOK = false
+    @State private var yDirectionOK = false
+    @State private var xSwitchSawOff = false
+    @State private var xSwitchSawOn = false
+    @State private var ySwitchSawOff = false
+    @State private var ySwitchSawOn = false
+    @State private var endStopBlocked = false
+    @State private var travelX: Double = MachineProfile.conservativeTravelX
+    @State private var travelY: Double = MachineProfile.conservativeTravelY
+    @State private var measuringAxis: CalibrationAxis = .x
+    @State private var travelStep: Double = 10
+    @State private var enableHardLimits = false
+    @State private var measuredX: String = "100"
+    @State private var measuredY: String = "100"
+    @State private var scaleApplied = false
+    @State private var oversizeRejected = false
+    @State private var boundaryReady = false
+    @State private var homingStarted = false
 
-    private enum WizardStep: Int, CaseIterable {
-        case intro
-        case prepare
-        case markStart
-        case move
-        case markEnd
-        case measure
-        case apply
-        case done
+    private enum Step: Int, CaseIterable, Identifiable {
+        case power, head, direction, endStops, homing, travel, limits, pen, accuracy, safety, save
+
+        var id: Int { rawValue }
+
+        var title: String {
+            switch self {
+            case .power: return "Power check"
+            case .head: return "Pen head"
+            case .direction: return "Direction test"
+            case .endStops: return "End-stop test"
+            case .homing: return "Homing test"
+            case .travel: return "Safe travel"
+            case .limits: return "Enable limits"
+            case .pen: return "Pen calibrate"
+            case .accuracy: return "Accuracy test"
+            case .safety: return "Safety test"
+            case .save: return "Save profile"
+            }
+        }
     }
 
     var body: some View {
@@ -32,514 +55,669 @@ struct CalibrationWizardView: View {
             header
             Divider()
             HStack(alignment: .top, spacing: 0) {
-                paperPreview
-                    .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
+                progressRail
+                    .frame(width: 200)
                 Divider()
-                stepPanel
-                    .frame(width: 360)
-                    .padding(20)
+                ScrollView {
+                    stepBody
+                        .padding(24)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
+            Divider()
+            footer
         }
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 820, minHeight: 560)
         .onAppear {
-            if model.machine.stepsPerMmX == nil || model.machine.stepsPerMmY == nil {
-                // Encourage probe so we start from firmware values.
-            }
+            travelX = min(model.machine.travelX, MachineProfile.conservativeTravelX)
+            travelY = min(model.machine.travelY, MachineProfile.conservativeTravelY)
+            if travelX < 20 { travelX = MachineProfile.conservativeTravelX }
+            if travelY < 20 { travelY = MachineProfile.conservativeTravelY }
+            model.requestStatus()
+        }
+        .onChange(of: model.status.pins) { pins in
+            guard step == .endStops, !endStopBlocked else { return }
+            if !pins.x { xSwitchSawOff = true }
+            if pins.x { xSwitchSawOn = true }
+            if !pins.y { ySwitchSawOff = true }
+            if pins.y { ySwitchSawOn = true }
+            // Stuck active at step entry is handled when entering endStops.
         }
     }
 
+    // MARK: - Chrome
+
     private var header: some View {
-        HStack {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Axis scale wizard")
+                Text("Calibration wizard")
                     .font(.title2.weight(.semibold))
-                Text("Goal: when Quill moves 10 mm, the pen travels 10 mm on paper.")
+                Text("Controlled commissioning — motion steps stay blocked until 12 V power is confirmed.")
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.inkMuted)
             }
             Spacer()
+            EmergencyStopButton(compact: true)
             Button("Close") {
                 model.setCalibrationWizardOpen(false)
                 dismiss()
             }
-                .keyboardShortcut(.cancelAction)
+            .keyboardShortcut(.cancelAction)
         }
         .padding(16)
     }
 
-    private var paperPreview: some View {
-        ZStack {
-            Rectangle()
-                .fill(Color.white)
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-
-            // Soft page edge
-            Rectangle()
-                .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
-
-            GeometryReader { geo in
-                let inset: CGFloat = 36
-                let w = geo.size.width - inset * 2
-                let h = geo.size.height - inset * 2
-                let origin = CGPoint(x: inset, y: geo.size.height - inset)
-
-                // Axis guides (light)
-                Path { p in
-                    p.move(to: origin)
-                    p.addLine(to: CGPoint(x: origin.x + w * 0.85, y: origin.y))
-                    p.move(to: origin)
-                    p.addLine(to: CGPoint(x: origin.x, y: origin.y - h * 0.85))
+    private var progressRail: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Step.allCases) { item in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(item.rawValue <= step.rawValue ? Theme.steel : Theme.mist)
+                        .frame(width: 8, height: 8)
+                    Text(item.title)
+                        .font(.system(.caption, design: .rounded).weight(item == step ? .semibold : .regular))
+                        .foregroundStyle(item == step ? Theme.ink : Theme.inkMuted)
                 }
-                .stroke(Color.black.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-
-                Text("X →")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .position(x: origin.x + w * 0.42, y: origin.y + 14)
-                Text("Y ↑")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .position(x: origin.x - 14, y: origin.y - h * 0.42)
-
-                let frac = min(max(commandedMm / max(model.machine.travelX, model.machine.travelY), 0.08), 0.7)
-                let end: CGPoint = {
-                    switch axis {
-                    case .x: return CGPoint(x: origin.x + w * frac, y: origin.y)
-                    case .y: return CGPoint(x: origin.x, y: origin.y - h * frac)
-                    }
-                }()
-
-                if markedStart || step.rawValue >= WizardStep.markStart.rawValue {
-                    circle(at: origin, filled: markedStart, label: "1")
-                }
-                if moved || markedEnd {
-                    Path { p in
-                        p.move(to: origin)
-                        p.addLine(to: end)
-                    }
-                    .stroke(Color.accentColor.opacity(0.55), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                }
-                if markedEnd || (step.rawValue >= WizardStep.markEnd.rawValue && moved) {
-                    circle(at: end, filled: markedEnd, label: "2")
-                }
-
-                if markedStart && markedEnd {
-                    let mid = CGPoint(x: (origin.x + end.x) / 2, y: (origin.y + end.y) / 2 - 12)
-                    Text(String(format: "commanded %.0f mm", commandedMm))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.accentColor)
-                        .position(mid)
-                }
-            }
-            .padding(24)
-
-            if step == .intro || step == .prepare {
-                VStack(spacing: 8) {
-                    Text("Blank page")
-                        .font(.title3.weight(.medium))
-                    Text("Put a clean white sheet under the pen.\nYou will mark two points, then measure between them.")
-                        .font(.callout)
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(24)
-                .background(.white.opacity(0.92))
-            }
-        }
-        .padding(20)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private func circle(at point: CGPoint, filled: Bool, label: String) -> some View {
-        ZStack {
-            Circle()
-                .fill(filled ? Color.red.opacity(0.85) : Color.red.opacity(0.25))
-                .frame(width: 14, height: 14)
-            Circle()
-                .stroke(Color.red, lineWidth: 1.5)
-                .frame(width: 14, height: 14)
-            Text(label)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.white)
-        }
-        .position(point)
-    }
-
-    @ViewBuilder
-    private var stepPanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            progressRow
-
-            if !model.isConnected {
-                Label("Connect the plotter first (sidebar → Connect).", systemImage: "cable.connector")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-            }
-
-            if let note = model.calibrationNote {
-                Text(note)
-                    .font(.callout)
-                    .foregroundStyle(.green)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            }
-
-            Group {
-                switch step {
-                case .intro: introCopy
-                case .prepare: prepareCopy
-                case .markStart: markStartCopy
-                case .move: moveCopy
-                case .markEnd: markEndCopy
-                case .measure: measureCopy
-                case .apply: applyCopy
-                case .done: doneCopy
-                }
-            }
-
-            Spacer(minLength: 0)
-            navButtons
-        }
-    }
-
-    private var progressRow: some View {
-        HStack(spacing: 6) {
-            ForEach(WizardStep.allCases, id: \.rawValue) { s in
-                Capsule()
-                    .fill(s.rawValue <= step.rawValue ? Color.accentColor : Color.secondary.opacity(0.25))
-                    .frame(height: 4)
-            }
-        }
-    }
-
-    private var introCopy: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Why calibrate?")
-                .font(.headline)
-            Text("Quill tells the controller “move 10 mm.” The controller converts that using steps per millimeter ($100 / $101). If those values are wrong, a 10 mm command draws a different length on paper.")
-                .font(.callout)
-            Text("This wizard draws two marks on each axis. You measure the real distance with a ruler; Quill adjusts the controller so commanded distance matches measured distance.")
-                .font(.callout)
-            Text("Tip: a longer span (50–100 mm) is more accurate than 10 mm, but the goal is the same — 1 mm commanded = 1 mm on paper.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var prepareCopy: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Prepare")
-                .font(.headline)
-            Text("1. Place a blank white sheet on the bed.\n2. Put a pen in the holder.\n3. Jog so the tip is over the bottom-left of the page.\n4. Optionally Probe $$/$I so Quill reads current steps/mm.")
-                .font(.callout)
-            HStack {
-                Button("Probe $$/$I") { model.probe() }
-                    .disabled(!model.isConnected)
-                Button("Set Zero here") { model.setWorkZero() }
-                    .disabled(!model.isConnected)
-            }
-            stepsReadout
-            Picker("Start with axis", selection: $axis) {
-                ForEach(CalibrationAxis.allCases) { a in
-                    Text(a.label).tag(a)
-                }
-            }
-            .pickerStyle(.segmented)
-            .disabled(xDone && !yDone) // if X done, force Y next via done flow
-        }
-    }
-
-    private var markStartCopy: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Mark point 1 — \(axis.label)")
-                .font(.headline)
-            Text("Lower the pen briefly to leave a small dot on the blank page. This is the start of your \(axis.prompt) measurement.")
-                .font(.callout)
-            Button("Mark point 1") {
-                model.markCalibrationPoint()
-                markedStart = true
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.isConnected)
-            if markedStart {
-                Text("Point 1 marked. Next, move a known distance.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var moveCopy: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Move \(axis.shortLabel)")
-                .font(.headline)
-            Text("Quill will jog a commanded distance \(axis.prompt). Pick a distance you can measure cleanly with a ruler.")
-                .font(.callout)
-            Picker("Commanded mm", selection: $commandedMm) {
-                ForEach(allowedMoves, id: \.self) { mm in
-                    Text("\(Int(mm)) mm").tag(mm)
-                }
-            }
-            .pickerStyle(.segmented)
-            Text(travelHint)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button("Move \(Int(commandedMm)) mm on \(axis.shortLabel)") {
-                model.runCalibrationMove(axis: axis, distanceMm: commandedMm)
-                moved = true
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.isConnected || !markedStart || !allowedMoves.contains(commandedMm))
-            .onAppear { clampCommandedToTravel() }
-            .onChange(of: axis) { _ in clampCommandedToTravel() }
-            if moved {
-                Text("Carriage moved. Mark point 2 at the new tip position.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var markEndCopy: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Mark point 2 — \(axis.label)")
-                .font(.headline)
-            Text("Leave a second dot where the pen tip is now. You will measure between point 1 and point 2.")
-                .font(.callout)
-            Button("Mark point 2") {
-                model.markCalibrationPoint()
-                markedEnd = true
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.isConnected || !moved)
-            if markedEnd {
-                Text("Both marks are on the page. Grab a ruler.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var measureCopy: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Measure")
-                .font(.headline)
-            Text("With a ruler, measure the distance between the two marks in millimeters. Enter what you actually see — not the commanded value.")
-                .font(.callout)
-            HStack {
-                Text("Measured mm")
-                TextField("e.g. 98.5", text: $measuredText)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 100)
-            }
-            Text(String(format: "Commanded: %.0f mm  ·  Ideal: measured ≈ %.0f mm", commandedMm, commandedMm))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var applyCopy: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Apply adjustment")
-                .font(.headline)
-            let measured = Double(measuredText.replacingOccurrences(of: ",", with: ".")) ?? 0
-            let current = axis == .x
-                ? (model.machine.stepsPerMmX ?? MachineProfile.defaultStepsPerMm)
-                : (model.machine.stepsPerMmY ?? MachineProfile.defaultStepsPerMm)
-            let preview = MachineProfile.correctedStepsPerMm(
-                current: current,
-                commandedMm: commandedMm,
-                measuredMm: measured
-            )
-
-            Text(String(
-                format: "Commanded %.0f mm · measured %.1f mm",
-                commandedMm, measured
-            ))
-            .font(.callout)
-
-            if let preview {
-                Text(String(format: "New \(axis.shortLabel) steps/mm: %.4f  (was %.4f)", preview, current))
-                    .font(.system(.body, design: .monospaced))
-                if abs(measured - commandedMm) < 0.3 {
-                    Text("Already very close — applying will make a tiny tweak.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if measured < commandedMm {
-                    Text("Machine moved short → increasing steps/mm.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Machine moved long → decreasing steps/mm.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Enter a valid measured length first.")
-                    .foregroundStyle(.orange)
-            }
-
-            Button("Write \(axis.shortLabel) calibration to controller") {
-                model.applyDistanceCalibration(
-                    axis: axis,
-                    commandedMm: commandedMm,
-                    measuredMm: measured
-                )
-                switch axis {
-                case .x: xDone = true
-                case .y: yDone = true
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.isConnected || preview == nil)
-        }
-    }
-
-    private var doneCopy: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(xDone && yDone ? "Calibration complete" : "Axis saved")
-                .font(.headline)
-            stepsReadout
-            if xDone && !yDone {
-                Text("X is updated. Next, calibrate Y the same way: two marks, measure, apply.")
-                    .font(.callout)
-            } else if yDone && !xDone {
-                Text("Y is updated. You can still run X if needed.")
-                    .font(.callout)
-            } else {
-                Text("Both axes are adjusted. Draw a 10×10 mm square or a 100 mm line and verify with a ruler.")
-                    .font(.callout)
-            }
-        }
-    }
-
-    private var stepsReadout: some View {
-        Group {
-            if let sx = model.machine.stepsPerMmX, let sy = model.machine.stepsPerMmY {
-                Text(String(format: "Steps/mm: X %.3f · Y %.3f", sx, sy))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Steps/mm unknown — run Probe $$/$I for best results.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var navButtons: some View {
-        HStack {
-            if step != .intro {
-                Button("Back") { goBack() }
             }
             Spacer()
-            if step == .done {
-                if !(xDone && yDone) {
-                    Button(xDone ? "Calibrate Y" : "Calibrate X") {
-                        axis = xDone ? .y : .x
-                        resetAxisState()
-                        step = .markStart
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
+            if !model.motorsPowerConfirmed {
+                Text("Motors power not confirmed")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.danger)
+            }
+        }
+        .padding(16)
+    }
+
+    private var footer: some View {
+        HStack {
+            Button("Back") { goBack() }
+                .disabled(step == .power)
+            Spacer()
+            if step == .save {
                 Button("Finish") {
+                    model.finishCommissioningProfile()
                     model.setCalibrationWizardOpen(false)
                     dismiss()
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.steel)
+                .disabled(!oversizeRejected || !boundaryReady)
             } else {
-                Button(primaryLabel) { goNext() }
+                Button("Continue") { goNext() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!canAdvance)
-                    .keyboardShortcut(.defaultAction)
+                    .tint(Theme.steel)
+                    .disabled(!canContinue)
+            }
+        }
+        .padding(16)
+    }
+
+    // MARK: - Steps
+
+    @ViewBuilder
+    private var stepBody: some View {
+        switch step {
+        case .power: powerStep
+        case .head: headStep
+        case .direction: directionStep
+        case .endStops: endStopsStep
+        case .homing: homingStep
+        case .travel: travelStepView
+        case .limits: limitsStep
+        case .pen: penStep
+        case .accuracy: accuracyStep
+        case .safety: safetyStep
+        case .save: saveStep
+        }
+    }
+
+    private var powerStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Power and connection",
+                "USB alone can show Connected while motors are dead. Missed steps make every measurement unreliable — block motion calibration until 12 V is confirmed."
+            )
+            if !model.isConnected {
+                HelpCard(
+                    title: "Connect first",
+                    message: "Finish Setup → Connect, then return here.",
+                    tone: .caution
+                )
+            }
+            Toggle("Regulated 12 V DC adapter is plugged in and powered", isOn: $power12V)
+            Toggle("Controller POWER LED is on (blue board switch)", isOn: $powerLED)
+            Toggle(
+                "I confirm motors have power — not USB-only",
+                isOn: Binding(
+                    get: { model.motorsPowerConfirmed },
+                    set: { model.confirmMotorsPowered($0) }
+                )
+            )
+            .disabled(!(power12V && powerLED && model.isConnected))
+            HelpCard(
+                title: "Why this gate exists",
+                message: "Low or missing motor voltage skips steps. Direction, homing, and travel measurements would all be wrong.",
+                tone: .info
+            )
+        }
+    }
+
+    private var headStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle("Select pen-head type", "T-A4 motor pen uses a four-wire stepper. Three-wire hobby servo heads store separate up/down angles.")
+            ForEach(PenHeadType.allCases) { type in
+                Button {
+                    model.machine.penHeadType = type
+                    model.persistMachine()
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: model.machine.penHeadType == type ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(model.machine.penHeadType == type ? Theme.ok : Theme.inkMuted)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(type.displayName)
+                                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                                .foregroundStyle(Theme.ink)
+                            Text(type.detail)
+                                .font(Theme.captionFont)
+                                .foregroundStyle(Theme.inkMuted)
+                        }
+                        Spacer()
+                    }
+                    .padding(12)
+                    .quillGlass(
+                        tint: model.machine.penHeadType == type ? Theme.steel.opacity(0.2) : nil,
+                        shape: .rect(cornerRadius: 14)
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
 
-    private var primaryLabel: String {
-        switch step {
-        case .apply: return "Continue"
-        case .intro: return "Start"
-        default: return "Next"
+    private var directionStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Direction test",
+                "Park the carriage near the middle. Keep the pen raised. Jog 5 mm on each axis and confirm direction before continuing."
+            )
+            motionGateBanner
+            HStack(spacing: 12) {
+                Button("Pen up") { model.penUp() }
+                    .disabled(!model.canCalibrateMotion)
+                Button("Jog X +5 mm") {
+                    model.jogStep = 5
+                    model.jog(dx: 5, dy: 0)
+                }
+                .disabled(!model.canCalibrateMotion)
+                Button("X moved correctly") { xDirectionOK = true }
+                    .disabled(!model.canCalibrateMotion)
+                Button("X is reversed — flip") {
+                    model.flipAxisInvert(.x)
+                    xDirectionOK = false
+                }
+                .disabled(!model.canCalibrateMotion)
+            }
+            HStack(spacing: 12) {
+                Button("Jog Y +5 mm") {
+                    model.jogStep = 5
+                    model.jog(dx: 0, dy: 5)
+                }
+                .disabled(!model.canCalibrateMotion)
+                Button("Y moved correctly") { yDirectionOK = true }
+                    .disabled(!model.canCalibrateMotion)
+                Button("Y is reversed — flip") {
+                    model.flipAxisInvert(.y)
+                    yDirectionOK = false
+                }
+                .disabled(!model.canCalibrateMotion)
+            }
+            Text("Invert mask $3 = \(model.machine.directionInvertMask) · X \(model.machine.invertX ? "flipped" : "normal") · Y \(model.machine.invertY ? "flipped" : "normal")")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.inkMuted)
         }
     }
 
-    private var canAdvance: Bool {
+    private var endStopsStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "End-stop test",
+                "With motors stationary, press each switch by hand. The app must see it go active, then clear when released. Do not home until both pass."
+            )
+            motionGateBanner
+            HStack(spacing: 10) {
+                Button("Refresh status") { model.requestStatus() }
+                Button("Reset switch checks") {
+                    xSwitchSawOff = !model.status.pins.x
+                    xSwitchSawOn = false
+                    ySwitchSawOff = !model.status.pins.y
+                    ySwitchSawOn = false
+                    endStopBlocked = model.status.pins.x || model.status.pins.y
+                }
+            }
+            if endStopBlocked || model.status.pins.anyXYLimit {
+                HelpCard(
+                    title: "Switch stuck active",
+                    message: "A limit pin is reporting active while idle. Clear the switch or wiring before homing.",
+                    tone: .danger
+                )
+            }
+            pinRow(title: "X switch", active: model.status.pins.x, sawOff: xSwitchSawOff, sawOn: xSwitchSawOn)
+            pinRow(title: "Y switch", active: model.status.pins.y, sawOff: ySwitchSawOff, sawOn: ySwitchSawOn)
+            Text("Live pins: \(model.status.raw.isEmpty ? "waiting for status…" : model.status.raw)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(Theme.inkMuted)
+                .textSelection(.enabled)
+        }
+        .onAppear {
+            model.requestStatus()
+            if model.status.pins.x || model.status.pins.y {
+                endStopBlocked = true
+            }
+            xSwitchSawOff = !model.status.pins.x
+            ySwitchSawOff = !model.status.pins.y
+        }
+    }
+
+    private var homingStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Homing test",
+                "Raise the pen. Home X and Y only at low speed. Each axis must move toward its switch, touch it, back off slightly, and stop. Stop immediately if an axis runs away. Z is not homed."
+            )
+            motionGateBanner
+            HStack(spacing: 10) {
+                Button("Enable homing ($22=1)") { model.enableHomingSetting() }
+                    .disabled(!model.canCalibrateMotion)
+                Button("Pen up") { model.penUp() }
+                    .disabled(!model.canCalibrateMotion)
+                Button("Home X/Y") {
+                    homingStarted = true
+                    model.homeXY()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.steel)
+                .disabled(!model.canCalibrateMotion || endStopsIncomplete)
+            }
+            Text("Watch the gantry: toward switch → click → small backoff → Idle. Use Emergency Stop if it moves away from a switch.")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.inkMuted)
+            Toggle("Both axes homed correctly (toward switch, touch, backoff, stop)", isOn: $homingStarted)
+                .disabled(!model.canCalibrateMotion)
+        }
+    }
+
+    private var travelStepView: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Measure safe travel",
+                "After homing, move toward the opposite end in 10 mm steps, then 1 mm near the edge. Stop 3–5 mm before mechanical collision. Do not assume every unit reaches 200×300 mm."
+            )
+            motionGateBanner
+            Picker("Axis", selection: $measuringAxis) {
+                Text("X").tag(CalibrationAxis.x)
+                Text("Y").tag(CalibrationAxis.y)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 220)
+            Picker("Step", selection: $travelStep) {
+                Text("10 mm").tag(10.0)
+                Text("1 mm").tag(1.0)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 220)
+            HStack(spacing: 10) {
+                Button("Pen up") { model.penUp() }
+                    .disabled(!model.canCalibrateMotion)
+                Button("Jog +step") {
+                    model.jogStep = travelStep
+                    switch measuringAxis {
+                    case .x: model.jog(dx: travelStep, dy: 0)
+                    case .y: model.jog(dx: 0, dy: travelStep)
+                    }
+                }
+                .disabled(!model.canCalibrateMotion)
+                Button("Jog −step") {
+                    model.jogStep = travelStep
+                    switch measuringAxis {
+                    case .x: model.jog(dx: -travelStep, dy: 0)
+                    case .y: model.jog(dx: 0, dy: -travelStep)
+                    }
+                }
+                .disabled(!model.canCalibrateMotion)
+            }
+            HStack {
+                Text("Safe X mm")
+                TextField("", value: $travelX, format: .number)
+                    .frame(width: 72)
+                Text("Safe Y mm")
+                TextField("", value: $travelY, format: .number)
+                    .frame(width: 72)
+                Button("Use conservative \(Int(MachineProfile.conservativeTravelX))×\(Int(MachineProfile.conservativeTravelY))") {
+                    travelX = MachineProfile.conservativeTravelX
+                    travelY = MachineProfile.conservativeTravelY
+                }
+                .font(Theme.captionFont)
+            }
+            Text(String(
+                format: "Machine position X %.1f · Y %.1f — enter the distance from home to your stop point as safe travel.",
+                model.status.mpos.x, model.status.mpos.y
+            ))
+            .font(Theme.captionFont)
+            .foregroundStyle(Theme.inkMuted)
+        }
+    }
+
+    private var limitsStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Enable software limits",
+                "Write safe travel to $130/$131, enable homing ($22), then soft limits ($20). Enable $20 only after homing works. Soft limits need a valid machine position — home again after every restart."
+            )
+            motionGateBanner
+            Text(String(format: "Will write $130=%.0f  $131=%.0f  $22=1  $20=1", travelX, travelY))
+                .font(.system(.body, design: .monospaced))
+            Toggle("Also enable hard limits ($21=1) — optional", isOn: $enableHardLimits)
+            Button("Write travel + enable limits") {
+                model.enableHomingSetting()
+                model.applySafeTravelAndLimits(
+                    travelX: travelX,
+                    travelY: travelY,
+                    enableSoftLimits: true,
+                    enableHardLimits: enableHardLimits
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.steel)
+            .disabled(!model.canCalibrateMotion)
+            if model.machine.softLimitsEnabled {
+                HelpCard(
+                    title: "Soft limits on",
+                    message: "Home X/Y after every power cycle before plotting. Soft limits are meaningless until the controller knows where home is.",
+                    tone: .ok
+                )
+            }
+        }
+    }
+
+    private var penStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Calibrate the pen",
+                model.machine.penHeadType == .motor
+                    ? "Motor head: raise ≈5 mm above paper, lower in small steps until it writes, then add only minimal extra pressure (Bachin often ~2–5 in their UI; Quill GRBL Z-up uses higher = raised)."
+                    : "Servo head: start from a neutral angle, raise until safe clearance, then lower gradually until the pen writes. Store separate up/down angles."
+            )
+            motionGateBanner
+            if model.machine.penHeadType == .motor {
+                HStack {
+                    Text("Pen up Z")
+                    TextField("", value: $model.machine.penUpZ, format: .number)
+                        .frame(width: 56)
+                        .onSubmit { model.clampPenHeightsToBachinRange(); model.persistMachine() }
+                    Text("Pen down Z")
+                    TextField("", value: $model.machine.penDownZ, format: .number)
+                        .frame(width: 56)
+                        .onSubmit { model.clampPenHeightsToBachinRange(); model.persistMachine() }
+                    Button("Recommended 5 / 0") {
+                        model.applyRecommendedPenHeights()
+                    }
+                }
+                HStack(spacing: 10) {
+                    Button("Pen up") { model.penUp() }
+                    Button("Pen down") { model.penDown() }
+                    Button("Nudge down 0.2") {
+                        model.machine.penDownZ = max(0, model.machine.penDownZ - 0.2)
+                        model.clampPenHeightsToBachinRange()
+                        model.persistMachine()
+                        model.penDown()
+                    }
+                }
+                .disabled(!model.canCalibrateMotion)
+            } else {
+                HStack {
+                    Text("Up angle")
+                    TextField("", value: $model.machine.penUpAngle, format: .number)
+                        .frame(width: 56)
+                        .onSubmit { model.persistMachine() }
+                    Text("Down angle")
+                    TextField("", value: $model.machine.penDownAngle, format: .number)
+                        .frame(width: 56)
+                        .onSubmit { model.persistMachine() }
+                }
+                Text("Angles are stored on the machine profile. Keep clearance safe before any write test.")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.inkMuted)
+            }
+        }
+    }
+
+    private var accuracyStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Accuracy test",
+                "Command 100 mm on X and Y (pen can mark or you measure travel). If scaling is wrong: new_steps = old × commanded ÷ measured."
+            )
+            motionGateBanner
+            HStack(spacing: 10) {
+                Button("Pen up") { model.penUp() }
+                Button("Move X 100 mm") {
+                    model.jogStep = 100
+                    model.jog(dx: 100, dy: 0)
+                }
+                Button("Move Y 100 mm") {
+                    model.jogStep = 100
+                    model.jog(dx: 0, dy: 100)
+                }
+            }
+            .disabled(!model.canCalibrateMotion)
+            HStack {
+                Text("Measured X mm")
+                TextField("", text: $measuredX)
+                    .frame(width: 64)
+                Button("Apply X steps/mm") {
+                    if let m = Double(measuredX) {
+                        model.applyDistanceCalibration(axis: .x, commandedMm: 100, measuredMm: m)
+                        scaleApplied = true
+                    }
+                }
+            }
+            HStack {
+                Text("Measured Y mm")
+                TextField("", text: $measuredY)
+                    .frame(width: 64)
+                Button("Apply Y steps/mm") {
+                    if let m = Double(measuredY) {
+                        model.applyDistanceCalibration(axis: .y, commandedMm: 100, measuredMm: m)
+                        scaleApplied = true
+                    }
+                }
+            }
+            .disabled(!model.canCalibrateMotion)
+            Text(String(
+                format: "Current steps/mm X %@ · Y %@",
+                fmtOpt(model.machine.stepsPerMmX),
+                fmtOpt(model.machine.stepsPerMmY)
+            ))
+            .font(Theme.captionFont)
+            .foregroundStyle(Theme.inkMuted)
+            Toggle("Scale checked (or already accurate)", isOn: $scaleApplied)
+        }
+    }
+
+    private var safetyStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Final safety test",
+                "Keep the pen raised. Trace the boundary rectangle, then verify a deliberately oversized job is rejected before any motion commands are sent."
+            )
+            motionGateBanner
+            HStack(spacing: 10) {
+                Button("Prepare boundary + oversize check") {
+                    let result = model.runCommissioningSafetyTests()
+                    boundaryReady = true
+                    oversizeRejected = result.oversizeRejected
+                    model.loadJob(text: result.boundaryGCode, name: "Boundary-frame.gcode", isSVG: false)
+                }
+                .disabled(!model.canCalibrateMotion)
+                Button("Trace boundary (Start)") {
+                    model.startJob()
+                }
+                .disabled(!model.canCalibrateMotion || !boundaryReady || !oversizeRejected)
+                .help("Streams the raised-pen boundary rectangle already loaded")
+            }
+            if boundaryReady {
+                HelpCard(
+                    title: oversizeRejected ? "Oversize rejected" : "Oversize NOT rejected",
+                    message: oversizeRejected
+                        ? "Preflight correctly blocked a job past soft travel. Boundary G-code is loaded — Frame with pen raised when ready."
+                        : "Preflight failed to reject an oversized path. Check travel limits before finishing.",
+                    tone: oversizeRejected ? .ok : .danger
+                )
+            }
+        }
+    }
+
+    private var saveStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            stepTitle(
+                "Save machine profile",
+                "Persist head type, safe travel, direction, steps/mm, homing/limits, pen up/down, and firmware as one profile."
+            )
+            profileSummary
+            Button("Save profile now") {
+                model.finishCommissioningProfile()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.steel)
+        }
+    }
+
+    private var profileSummary: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Head: \(model.machine.penHeadType.displayName)")
+            Text(String(format: "Travel: %.0f × %.0f mm", model.machine.travelX, model.machine.travelY))
+            Text("Invert $3: \(model.machine.directionInvertMask)")
+            Text(String(
+                format: "Steps/mm: X %@ · Y %@",
+                fmtOpt(model.machine.stepsPerMmX),
+                fmtOpt(model.machine.stepsPerMmY)
+            ))
+            Text("$20 soft \(model.machine.softLimitsEnabled ? "on" : "off") · $21 hard \(model.machine.hardLimitsEnabled ? "on" : "off") · $22 homing \(model.machine.homingEnabled ? "on" : "off")")
+            if model.machine.penHeadType == .motor {
+                Text(String(format: "Pen Z up %.1f · down %.1f", model.machine.penUpZ, model.machine.penDownZ))
+            } else {
+                Text(String(format: "Pen angles up %.0f° · down %.0f°", model.machine.penUpAngle, model.machine.penDownAngle))
+            }
+            Text("Firmware: \(model.machine.buildInfo ?? model.firmwareAssessment.versionLabel)")
+                .textSelection(.enabled)
+        }
+        .font(Theme.captionFont)
+        .foregroundStyle(Theme.inkMuted)
+    }
+
+    // MARK: - Helpers
+
+    private var motionGateBanner: some View {
+        Group {
+            if !model.canCalibrateMotion {
+                HelpCard(
+                    title: model.isConnected
+                        ? (model.isAlarm ? "Machine locked" : "Power not confirmed")
+                        : "Not connected",
+                    message: model.isConnected
+                        ? (model.isAlarm
+                           ? "Unlock before any calibration motion."
+                           : "Return to Power check and confirm 12 V + POWER LED. USB-only connection is not enough.")
+                        : "Connect in Setup first.",
+                    tone: .danger,
+                    actionTitle: model.isAlarm ? "Unlock" : nil,
+                    onAction: model.isAlarm ? { model.unlock() } : nil
+                )
+            }
+        }
+    }
+
+    private func stepTitle(_ title: String, _ subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .foregroundStyle(Theme.ink)
+            Text(subtitle)
+                .font(Theme.bodyFont)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func pinRow(title: String, active: Bool, sawOff: Bool, sawOn: Bool) -> some View {
+        let passed = sawOff && sawOn && !active
+        return HStack {
+            Text(title)
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+            Spacer()
+            Text(active ? "ACTIVE" : "clear")
+                .font(.caption.monospaced())
+                .foregroundStyle(active ? Theme.caution : Theme.inkMuted)
+            Text(passed ? "Pass" : "Press & release")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(passed ? Theme.ok : Theme.inkMuted)
+        }
+        .padding(10)
+        .quillGlass(tint: passed ? Theme.ok.opacity(0.15) : nil, shape: .rect(cornerRadius: 12))
+    }
+
+    private var endStopsIncomplete: Bool {
+        endStopBlocked || !(xSwitchSawOff && xSwitchSawOn && ySwitchSawOff && ySwitchSawOn)
+            || model.status.pins.anyXYLimit
+    }
+
+    private var canContinue: Bool {
         switch step {
-        case .intro: return true
-        case .prepare: return model.isConnected
-        case .markStart: return markedStart
-        case .move: return moved
-        case .markEnd: return markedEnd
-        case .measure:
-            let v = Double(measuredText.replacingOccurrences(of: ",", with: ".")) ?? 0
-            return v > 0.1
-        case .apply: return true
-        case .done: return true
+        case .power:
+            return model.isConnected && power12V && powerLED && model.motorsPowerConfirmed
+        case .head:
+            return true
+        case .direction:
+            return model.canCalibrateMotion && xDirectionOK && yDirectionOK
+        case .endStops:
+            return model.canCalibrateMotion && !endStopsIncomplete
+        case .homing:
+            return model.canCalibrateMotion && homingStarted
+        case .travel:
+            return model.canCalibrateMotion && travelX > 10 && travelY > 10
+        case .limits:
+            return model.machine.softLimitsEnabled && model.machine.homingEnabled
+        case .pen:
+            return true
+        case .accuracy:
+            return scaleApplied
+        case .safety:
+            return boundaryReady && oversizeRejected
+        case .save:
+            return true
         }
     }
 
     private func goNext() {
-        model.calibrationNote = nil
-        switch step {
-        case .intro: step = .prepare
-        case .prepare:
-            resetAxisState()
-            step = .markStart
-        case .markStart: step = .move
-        case .move: step = .markEnd
-        case .markEnd: step = .measure
-        case .measure: step = .apply
-        case .apply: step = .done
-        case .done: break
+        guard let next = Step(rawValue: step.rawValue + 1) else { return }
+        if next == .endStops {
+            endStopBlocked = model.status.pins.x || model.status.pins.y
+            xSwitchSawOff = !model.status.pins.x
+            ySwitchSawOff = !model.status.pins.y
+            xSwitchSawOn = false
+            ySwitchSawOn = false
         }
+        withAnimation(.easeInOut(duration: 0.2)) { step = next }
     }
 
     private func goBack() {
-        model.calibrationNote = nil
-        switch step {
-        case .intro: break
-        case .prepare: step = .intro
-        case .markStart: step = .prepare
-        case .move: step = .markStart
-        case .markEnd: step = .move
-        case .measure: step = .markEnd
-        case .apply: step = .measure
-        case .done: step = .apply
-        }
+        guard let prev = Step(rawValue: step.rawValue - 1) else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { step = prev }
     }
 
-    private func resetAxisState() {
-        markedStart = false
-        moved = false
-        markedEnd = false
-        measuredText = ""
-        model.calibrationNote = nil
-        clampCommandedToTravel()
-    }
-
-    private var remainingTravelMm: Double {
-        let pos = model.workZeroKnown ? model.status.wpos : model.status.mpos
-        switch axis {
-        case .x: return model.machine.travelX - pos.x
-        case .y: return model.machine.travelY - pos.y
-        }
-    }
-
-    private var allowedMoves: [Double] {
-        [10.0, 50.0, 100.0].filter { $0 <= remainingTravelMm - 1 }
-    }
-
-    private var travelHint: String {
-        if allowedMoves.isEmpty {
-            return String(format: "Only %.1f mm of travel left on %@ — jog back or set zero closer to the start corner.", max(0, remainingTravelMm), axis.shortLabel)
-        }
-        return String(format: "%.0f mm of travel remaining on %@ (moves that would overshoot are hidden).", max(0, remainingTravelMm), axis.shortLabel)
-    }
-
-    private func clampCommandedToTravel() {
-        if !allowedMoves.contains(commandedMm) {
-            commandedMm = allowedMoves.last ?? 10
-        }
+    private func fmtOpt(_ v: Double?) -> String {
+        guard let v else { return "—" }
+        return String(format: "%.3f", v)
     }
 }

@@ -22,6 +22,23 @@ public struct MachineProfile: Equatable, Sendable, Codable {
     public var stepsPerMmY: Double?
     public var stepsPerMmZ: Double?
     public var buildInfo: String?
+    public var penHeadType: PenHeadType
+    /// Servo head: raised angle (degrees). Ignored for motor heads.
+    public var penUpAngle: Double
+    /// Servo head: writing angle (degrees). Ignored for motor heads.
+    public var penDownAngle: Double
+    /// Soft limits enabled on controller (`$20`).
+    public var softLimitsEnabled: Bool
+    /// Hard limits enabled on controller (`$21`).
+    public var hardLimitsEnabled: Bool
+    /// Homing cycle enabled on controller (`$22`).
+    public var homingEnabled: Bool
+    /// True after the controlled commissioning wizard completes successfully.
+    public var commissioningComplete: Bool
+
+    /// Conservative starting safe travel for many T-A4 units (do not assume full 200×300).
+    public static let conservativeTravelX: Double = 195
+    public static let conservativeTravelY: Double = 285
 
     /// Minimum pressure delta before emitting a new Z word in G-code (limits Z chatter).
     public static let pressureEpsilon: Double = 0.08
@@ -44,7 +61,14 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         stepsPerMmX: Double? = nil,
         stepsPerMmY: Double? = nil,
         stepsPerMmZ: Double? = nil,
-        buildInfo: String? = nil
+        buildInfo: String? = nil,
+        penHeadType: PenHeadType = .motor,
+        penUpAngle: Double = 90,
+        penDownAngle: Double = 40,
+        softLimitsEnabled: Bool = false,
+        hardLimitsEnabled: Bool = false,
+        homingEnabled: Bool = false,
+        commissioningComplete: Bool = false
     ) {
         self.name = name
         self.baudRate = baudRate
@@ -65,6 +89,13 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         self.stepsPerMmY = stepsPerMmY
         self.stepsPerMmZ = stepsPerMmZ
         self.buildInfo = buildInfo
+        self.penHeadType = penHeadType
+        self.penUpAngle = penUpAngle
+        self.penDownAngle = penDownAngle
+        self.softLimitsEnabled = softLimitsEnabled
+        self.hardLimitsEnabled = hardLimitsEnabled
+        self.homingEnabled = homingEnabled
+        self.commissioningComplete = commissioningComplete
         clampPressureRange()
     }
 
@@ -100,6 +131,9 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         if let v = settings["$100"] { stepsPerMmX = v }
         if let v = settings["$101"] { stepsPerMmY = v }
         if let v = settings["$102"] { stepsPerMmZ = v }
+        if let v = settings["$20"] { softLimitsEnabled = v >= 1 }
+        if let v = settings["$21"] { hardLimitsEnabled = v >= 1 }
+        if let v = settings["$22"] { homingEnabled = v >= 1 }
         if let dir = settings["$3"] {
             let mask = Int(dir)
             invertX = (mask & 1) != 0
@@ -153,6 +187,8 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         case penUpZ, penDownZ, pressureMinZ, pressureMaxZ
         case jogFeed, drawFeed, invertX, invertY, invertZ
         case stepsPerMmX, stepsPerMmY, stepsPerMmZ, buildInfo
+        case penHeadType, penUpAngle, penDownAngle
+        case softLimitsEnabled, hardLimitsEnabled, homingEnabled, commissioningComplete
     }
 
     public init(from decoder: Decoder) throws {
@@ -175,6 +211,13 @@ public struct MachineProfile: Equatable, Sendable, Codable {
         stepsPerMmY = try c.decodeIfPresent(Double.self, forKey: .stepsPerMmY)
         stepsPerMmZ = try c.decodeIfPresent(Double.self, forKey: .stepsPerMmZ)
         buildInfo = try c.decodeIfPresent(String.self, forKey: .buildInfo)
+        penHeadType = try c.decodeIfPresent(PenHeadType.self, forKey: .penHeadType) ?? .motor
+        penUpAngle = try c.decodeIfPresent(Double.self, forKey: .penUpAngle) ?? 90
+        penDownAngle = try c.decodeIfPresent(Double.self, forKey: .penDownAngle) ?? 40
+        softLimitsEnabled = try c.decodeIfPresent(Bool.self, forKey: .softLimitsEnabled) ?? false
+        hardLimitsEnabled = try c.decodeIfPresent(Bool.self, forKey: .hardLimitsEnabled) ?? false
+        homingEnabled = try c.decodeIfPresent(Bool.self, forKey: .homingEnabled) ?? false
+        commissioningComplete = try c.decodeIfPresent(Bool.self, forKey: .commissioningComplete) ?? false
         clampPressureRange()
     }
 }

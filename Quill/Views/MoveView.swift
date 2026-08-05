@@ -31,6 +31,14 @@ struct MoveView: View {
                         actionTitle: "Unlock",
                         onAction: { model.unlock() }
                     )
+                } else if !model.motorsPowerConfirmed {
+                    HelpCard(
+                        title: "Confirm 12 V motor power",
+                        message: "USB can show Connected while motors are unpowered. Confirm the adapter and POWER LED before Home X/Y — missed steps spoil calibration.",
+                        tone: .caution,
+                        actionTitle: "Motors powered",
+                        onAction: { model.confirmMotorsPowered(true) }
+                    )
                 }
 
                 GlassEffectContainer {
@@ -59,8 +67,8 @@ struct MoveView: View {
                                         .frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.bordered)
-                                .disabled(!model.isConnected || !model.allowsManualCommands)
-                                .help("Drive X and Y to the physical end switches ($H). Clear the bed first.")
+                                .disabled(!model.isConnected || !model.allowsManualCommands || !model.motorsPowerConfirmed)
+                                .help("Drive X and Y to the physical end switches ($H). Confirm 12 V power first. Clear the bed.")
                                 .confirmationDialog(
                                     "Home X and Y to the end switches?",
                                     isPresented: $confirmHomeXY,
