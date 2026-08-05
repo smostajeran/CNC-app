@@ -449,6 +449,27 @@ final class AppModel: ObservableObject {
     func penUp() { try? coordinator.penUp(machine) }
     func penDown() { try? coordinator.penDown(machine) }
 
+    /// Bachin motor-pen manuals document Z heights in 0…8 mm.
+    func clampPenHeightsToBachinRange() {
+        machine.penUpZ = min(max(machine.penUpZ, 0), 8)
+        machine.penDownZ = min(max(machine.penDownZ, 0), 8)
+        // Keep up strictly above down for GRBL Z-up (higher lifts the pen).
+        if machine.penUpZ <= machine.penDownZ {
+            machine.penUpZ = min(machine.penDownZ + 1, 8)
+        }
+        machine.clampPressureRange()
+        persistMachine()
+    }
+
+    /// Defaults matching Bachin “pen up gap ≤ 5 mm” guidance (Quill GRBL: up 5, down 0).
+    func applyRecommendedPenHeights() {
+        machine.penUpZ = 5
+        machine.penDownZ = 0
+        machine.clampPressureRange()
+        persistMachine()
+        calibrationNote = "Pen heights set to up 5 mm · down 0 mm. Check the tip clears paper when raised, then touches lightly when down."
+    }
+
     // MARK: - Axis scale calibration wizard
 
     func setCalibrationWizardOpen(_ open: Bool) {
