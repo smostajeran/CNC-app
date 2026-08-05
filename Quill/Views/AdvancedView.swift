@@ -14,6 +14,10 @@ struct AdvancedView: View {
                     Text("Recovery tools and raw commands. Most people can ignore this after Setup works.")
                         .font(Theme.bodyFont)
                         .foregroundStyle(.secondary)
+                    Text("Build \(BuildInfo.displayLabel)")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
                 }
 
                 GlassPanel {

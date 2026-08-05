@@ -4,6 +4,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+SHA="$(git rev-parse --short HEAD)"
+echo "==> Building Quill tip $SHA (marketing 1.3 / build 4)"
+
+echo "==> Stamp git commit into BuildInfo.swift"
+"$ROOT/scripts/stamp-build-info.sh"
+
+restore_buildinfo() {
+  git -C "$ROOT" checkout -- Quill/BuildInfo.swift 2>/dev/null || true
+}
+trap restore_buildinfo EXIT
+
 echo "==> CNCCore tests"
 swift test --package-path CNCCore
 
@@ -24,6 +35,8 @@ xcodebuild \
   -scheme Quill \
   -configuration Debug \
   -derivedDataPath "$ROOT/build/DerivedData" \
+  MARKETING_VERSION=1.3 \
+  CURRENT_PROJECT_VERSION=4 \
   CODE_SIGN_IDENTITY="-" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=YES \
@@ -42,6 +55,27 @@ if [[ "$STATUS" -ne 0 ]]; then
 fi
 
 APP="$ROOT/build/DerivedData/Build/Products/Debug/Quill.app"
+PLIST="$APP/Contents/Info.plist"
+
+# Stamp SHA into the built app's Info.plist so About/header can show the tip.
+if [[ -f "$PLIST" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :QuillGitCommit $SHA" "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :QuillGitCommit string $SHA" "$PLIST"
+fi
+
+SHORT="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST" 2>/dev/null || echo '?')"
+BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST" 2>/dev/null || echo '?')"
+GIT="$(/usr/libexec/PlistBuddy -c 'Print :QuillGitCommit' "$PLIST" 2>/dev/null || echo '?')"
+
 echo ""
 echo "Built: $APP"
-echo "Run:   open \"$APP\""
+echo "Version: $SHORT ($BUILD) · $GIT"
+if [[ "$SHORT" != "1.3" || "$BUILD" != "4" ]]; then
+  echo "ERROR: expected marketing 1.3 / build 4, got $SHORT ($BUILD)" >&2
+  exit 1
+fi
+if [[ "$GIT" != "$SHA" ]]; then
+  echo "ERROR: expected git tip $SHA in app, got $GIT" >&2
+  exit 1
+fi
+echo "Run:   open -n \"$APP\""

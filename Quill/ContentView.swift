@@ -154,6 +154,10 @@ struct ContentView: View {
                 Text(Theme.brandSubtitle)
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.inkMuted)
+                Text(BuildInfo.displayLabel)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(Theme.inkMuted)
+                    .help("Marketing version, build number, and git tip of this binary")
             }
             Spacer()
             EmergencyStopButton(bindsShortcut: true)
