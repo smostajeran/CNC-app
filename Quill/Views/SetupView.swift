@@ -203,9 +203,9 @@ struct FirmwareFriendlyView: View {
         case .unknown:
             parts.append("After Connect, tap Check machine.")
         case .compatible:
-            parts.append("You’re ready to nudge the pen in Move.")
+            parts.append("Next: Move → pick 10 mm → jog once to confirm direction.")
         case .caution, .incompatibleHint:
-            parts.append("You can still try Move carefully; open Advanced if something acts odd.")
+            parts.append("Next: Move → 10 mm jog carefully; Emergency Stop if it runs away. Open Advanced if Unlock is needed.")
         }
         return parts.joined(separator: " ")
     }
