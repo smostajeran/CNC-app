@@ -341,11 +341,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Clear Locked/Alarm: soft-reset + `$X`. Runs off the main thread so the UI stays responsive.
+    /// Clear Locked/Alarm via `$X`. Runs off the main thread so the UI stays responsive.
+    /// Does **not** call job cancel/halt — that soft-resets and re-triggers ALARM:3.
     func unlock() {
         lastError = nil
         penChangeMessage = nil
-        runner.cancel()
+        // Clear Fault: ALARM:3 in the Run panel without soft-resetting again.
+        runner.abandonWithoutReset()
+        streamState = .idle
         guard isConnected else {
             lastError = "Connect first"
             return
@@ -353,8 +356,9 @@ final class AppModel: ObservableObject {
         guard !isUnlocking else { return }
         isUnlocking = true
         let coordinator = self.coordinator
-        console.append("--- Unlocking (soft reset + $X)… ---")
-        motionWarning = "Unlocking…"
+        console.append("--- Unlocking ($X)… ---")
+        noticeTitle = "Unlocking"
+        motionWarning = "Clearing Alarm — wait a moment…"
         Task.detached(priority: .userInitiated) {
             defer {
                 Task { @MainActor in self.isUnlocking = false }
@@ -362,15 +366,19 @@ final class AppModel: ObservableObject {
             do {
                 try coordinator.unlock()
                 await MainActor.run {
-                    self.console.append("--- Unlock: soft reset + $X ---")
+                    self.runner.abandonWithoutReset()
+                    self.streamState = .idle
+                    self.console.append("--- Unlock: $X accepted ---")
                     self.motionWarning = nil
-                    if self.noticeTitle == "Emergency stop" || self.noticeTitle == "Machine locked" {
+                    if self.noticeTitle == "Emergency stop"
+                        || self.noticeTitle == "Machine locked"
+                        || self.noticeTitle == "Unlocking" {
                         self.noticeTitle = nil
                     }
                     self.requestStatus()
                 }
-                // Give status polling a beat; if still Alarm, disable soft limits once and retry.
-                try await Task.sleep(nanoseconds: 500_000_000)
+                // If soft limits re-trip Alarm, disable $20 once and retry.
+                try await Task.sleep(nanoseconds: 400_000_000)
                 let stillAlarm = await MainActor.run { self.isConnected && self.isAlarm }
                 if stillAlarm {
                     do {
@@ -383,28 +391,33 @@ final class AppModel: ObservableObject {
                         await MainActor.run {
                             self.lastError = error.localizedDescription
                             self.motionWarning = error.localizedDescription
+                            self.noticeTitle = "Machine locked"
                         }
                         return
                     }
-                    try await Task.sleep(nanoseconds: 400_000_000)
+                    try await Task.sleep(nanoseconds: 350_000_000)
                 }
                 await MainActor.run {
                     guard self.isConnected else { return }
+                    self.runner.abandonWithoutReset()
+                    self.streamState = .idle
                     self.requestStatus()
                     if self.isAlarm {
-                        let msg = "Still locked after Unlock. Confirm 12 V power, then Soft reset in Advanced and Unlock again."
+                        let msg = "Still locked (ALARM). Confirm 12 V power. ALARM:3 means a reset during motion — Unlock again, or Soft reset in Advanced then Unlock."
                         self.lastError = msg
                         self.motionWarning = msg
+                        self.noticeTitle = "Machine locked"
                     } else {
                         self.motionWarning = nil
-                        if self.noticeTitle == "Machine locked" { self.noticeTitle = nil }
-                        self.console.append("--- Unlocked — Idle ---")
+                        self.noticeTitle = nil
+                        self.console.append("--- Unlocked — ready to move ---")
                     }
                 }
             } catch {
                 await MainActor.run {
                     self.lastError = error.localizedDescription
                     self.motionWarning = error.localizedDescription
+                    self.noticeTitle = "Machine locked"
                 }
             }
         }

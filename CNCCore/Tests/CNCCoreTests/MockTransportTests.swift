@@ -23,6 +23,8 @@ final class MockTransport: GRBLTransport {
             readQueue.append(Data("$100=80.000\n$130=390.000\n$131=200.000\nok\n".utf8))
         } else if data == Data([GRBLRealtime.softReset]) {
             readQueue.append(Data("Grbl 1.1f ['$' for help]\n".utf8))
+        } else if data == Data([GRBLRealtime.status]) {
+            readQueue.append(Data("<Idle|MPos:0.000,0.000,0.000|FS:0,0>\n".utf8))
         } else if text.hasSuffix("\n") {
             readQueue.append(Data("ok\n".utf8))
         }
@@ -78,10 +80,28 @@ final class GRBLClientProbeTests: XCTestCase {
         try client.connect(path: "/dev/mock", baudRate: 115_200)
         transport.written.removeAll()
         try client.unlock()
-        XCTAssertTrue(transport.written.contains(Data([GRBLRealtime.softReset])), "unlock should soft-reset first")
+        XCTAssertTrue(transport.written.contains(Data([GRBLRealtime.softReset])), "unlock should soft-reset when not already Alarm")
         let lines = transport.written.compactMap { String(data: $0, encoding: .utf8) }
         XCTAssertTrue(lines.contains { $0 == "$X\n" || $0.hasPrefix("$X") }, "unlock should send $X")
         XCTAssertTrue(transport.written.contains(Data([GRBLRealtime.status])), "unlock should request status")
+        client.disconnect()
+    }
+
+    func testUnlockWhenAlreadyAlarmSendsDollarXWithoutSoftReset() throws {
+        let transport = MockTransport()
+        let client = GRBLClient(transport: transport)
+        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        // Simulate post E-Stop ALARM:3 status.
+        transport.readQueue.append(Data("<Alarm|MPos:0.000,0.000,0.000|FS:0,0>\n".utf8))
+        Thread.sleep(forTimeInterval: 0.15)
+        transport.written.removeAll()
+        try client.unlock()
+        XCTAssertFalse(
+            transport.written.contains(Data([GRBLRealtime.softReset])),
+            "already-Alarm unlock must not soft-reset (that re-triggers ALARM:3)"
+        )
+        let lines = transport.written.compactMap { String(data: $0, encoding: .utf8) }
+        XCTAssertTrue(lines.contains { $0 == "$X\n" || $0.hasPrefix("$X") })
         client.disconnect()
     }
 

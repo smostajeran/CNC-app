@@ -1,5 +1,17 @@
 import Foundation
 
+public enum GRBLClientError: Error, LocalizedError, Equatable {
+    case unlockFailed(String)
+    case commandTimeout(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unlockFailed(let detail): return detail
+        case .commandTimeout(let detail): return detail
+        }
+    }
+}
+
 public protocol GRBLTransport: AnyObject {
     var isOpen: Bool { get }
     func open(path: String, baudRate: Int) throws
@@ -86,20 +98,57 @@ public final class GRBLClient: @unchecked Sendable {
         try sendRealtime(GRBLRealtime.status)
     }
 
-    /// Clear Alarm. Soft-resets first so a stuck planner/buffer (after E-Stop or a hung probe)
-    /// cannot block the `$X` line, then unlocks and requests status.
+    /// Clear Alarm (`$X`).
+    ///
+    /// If the controller is already in Alarm (typical after E-Stop → ALARM:3), send `$X`
+    /// first — another soft-reset only re-locks the machine. Soft-reset then `$X` is used
+    /// when the buffer may be stuck and Alarm is not already reported.
     /// Polling is paused so drain/`ok` collection cannot race the status timer.
     public func unlock() throws {
         stopPolling()
         defer { startPolling() }
+
+        let alreadyAlarm = lastStatus.state.localizedCaseInsensitiveContains("alarm")
+        if alreadyAlarm {
+            if try sendUnlockAndConfirm() { return }
+        }
+
         try softReset()
-        Thread.sleep(forTimeInterval: 0.35)
-        _ = try drain(timeout: 0.3)
+        Thread.sleep(forTimeInterval: 0.4)
+        _ = try drain(timeout: 0.35)
+        guard try sendUnlockAndConfirm() else {
+            throw GRBLClientError.unlockFailed(
+                "Controller did not leave Alarm after $X. Check USB/power, then try Unlock again."
+            )
+        }
+    }
+
+    /// Returns true when `$X` is accepted and a fresh status (if any) is not Alarm.
+    private func sendUnlockAndConfirm() throws -> Bool {
         try sendLine("$X")
-        _ = try collectUntilOk(timeout: 2.0)
+        let response = try collectUntilOk(timeout: 2.5, requireOk: true)
+        let lower = response.lowercased()
+        if lower.contains("error:") {
+            throw GRBLClientError.unlockFailed("Unlock rejected: \(response)")
+        }
         try requestStatus()
-        Thread.sleep(forTimeInterval: 0.08)
-        _ = try drain(timeout: 0.2)
+        Thread.sleep(forTimeInterval: 0.1)
+        let drained = try drain(timeout: 0.25)
+        if drained.contains("<") {
+            return !lastStatus.state.localizedCaseInsensitiveContains("alarm")
+        }
+        // `$X` ok with no status report yet — treat as unlocked (E-Stop ALARM:3 case).
+        if lastStatus.state.localizedCaseInsensitiveContains("alarm") {
+            lastStatus = GRBLStatus(
+                state: "Idle",
+                mpos: lastStatus.mpos,
+                wpos: lastStatus.wpos,
+                pins: lastStatus.pins,
+                raw: lastStatus.raw
+            )
+            onStatus?(lastStatus)
+        }
+        return true
     }
 
     /// Home X and Y against the machine end switches (GRBL `$H`).
@@ -288,7 +337,7 @@ public final class GRBLClient: @unchecked Sendable {
         return chunks.joined(separator: "\n")
     }
 
-    private func collectUntilOk(timeout: TimeInterval) throws -> String {
+    private func collectUntilOk(timeout: TimeInterval, requireOk: Bool = false) throws -> String {
         let deadline = Date().addingTimeInterval(timeout)
         var lines: [String] = []
         while Date() < deadline {
@@ -301,8 +350,18 @@ public final class GRBLClient: @unchecked Sendable {
                 if line == "ok" {
                     return lines.joined(separator: "\n")
                 }
-                lines.append(line)
+                if line.hasPrefix("error:") || line.hasPrefix("ALARM") {
+                    lines.append(line)
+                    if requireOk {
+                        return lines.joined(separator: "\n")
+                    }
+                } else {
+                    lines.append(line)
+                }
             }
+        }
+        if requireOk {
+            throw GRBLClientError.commandTimeout("Timed out waiting for ok from controller.")
         }
         return lines.joined(separator: "\n")
     }

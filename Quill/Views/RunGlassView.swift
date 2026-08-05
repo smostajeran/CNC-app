@@ -39,10 +39,12 @@ struct RunGlassView: View {
             } else if model.isAlarm {
                 HelpCard(
                     title: "Machine is locked",
-                    message: "Unlock before Preflight, Frame, or Start.",
+                    message: model.isUnlocking
+                        ? "Clearing Alarm…"
+                        : "ALARM:3 usually means Emergency Stop or Soft reset during motion. Tap Unlock ($X) — do not Soft reset again first.",
                     tone: .danger,
-                    actionTitle: "Unlock",
-                    onAction: { model.unlock() }
+                    actionTitle: model.isUnlocking ? nil : "Unlock",
+                    onAction: model.isUnlocking ? nil : { model.unlock() }
                 )
                 .padding(.horizontal, 28)
             }

@@ -96,6 +96,17 @@ public final class JobRunner: @unchecked Sendable {
         }
     }
 
+    /// Drop job ownership and clear Fault/Cancelled without soft-resetting the controller.
+    /// Use before Unlock — `cancel()` calls halt/soft-reset and re-triggers GRBL ALARM:3.
+    public func abandonWithoutReset() {
+        queue.sync {
+            streamer.reset()
+            coordinator?.endStreaming()
+            stopPump()
+            emit(force: true)
+        }
+    }
+
     /// Call when a status report shows Idle (finalizes ack-complete jobs).
     public func noteStatus(_ status: GRBLStatus) {
         queue.async { [weak self] in
