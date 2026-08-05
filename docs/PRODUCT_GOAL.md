@@ -4,7 +4,9 @@
 
 **Problem:** Stock host software (“Panda” / Bachin Draw) is outdated and Windows-only.
 
-**v1 — macOS host app (`TA4Host`):** native SwiftUI app that replaces the essential Panda workflow over **USB serial GRBL 1.1**:
+**Product name:** **Quill** (sole macOS host app). `TA4Host` was an interim folder/target name during early branching and is not a second product.
+
+**v1 — macOS host app (`Quill`):** native SwiftUI app that replaces the essential Panda workflow over **USB serial GRBL 1.1**:
 
 - Connect / disconnect, console (`$$`, `$I`)
 - Status, soft-reset, unlock (`$X`), halt
@@ -36,10 +38,53 @@ Sourced from Bachin wiki tips, Apple Support Communities, and GRBL issues:
 ## Integrations
 
 - **Inkscape:** export TA-4 workspace SVG; honor viewBox + translate/scale/matrix; watch open file for Save → reload; layer/stroke colors → pen-change pauses
-- **macOS:** drag-drop, paste, document types, recent jobs, `ta4host://` URL scheme
+- **macOS:** drag-drop, paste, document types, recent jobs, `quill://` URL scheme (also accepts legacy `ta4host://`)
 - **Other CAM/senders:** normalize servo pen G-code from Candle / Inkscape extensions
 - **CLI:** `scripts/probe-grbl.py`, `scripts/send-gcode.py`
 
+## v1.2 — Pressure-aware handwriting
+
+| Need | Status |
+|------|--------|
+| Stylus / tablet pressure → motor Z | Shipped (ink canvas) |
+| Trackpad speed → synthetic pressure | Shipped |
+| SVG `stroke-width` → pressure → Z | Shipped |
+| Light/hard Z calibration + sweep test | Shipped |
+| `.ta4ink` save/load + SVG export | Shipped |
+
+## v1.3 — Axis scale wizard
+
+| Need | Status |
+|------|--------|
+| Blank-page wizard: mark 2 points per axis, measure, adjust `$100`/`$101` | Shipped |
+| Correct steps/mm so commanded mm ≈ measured mm (e.g. 10 mm = 10 mm) | Shipped |
+
+## Stabilization & machine safety (in progress)
+
+| Need | Status |
+|------|--------|
+| Exclusive serial `CommandCoordinator` (no jog/console during stream) | Shipped |
+| Host-side M0 pen-change pause + Resume | Shipped |
+| Modal G-code parser + job preflight before Start | Shipped |
+| Ack-based progress; Idle before 100% complete | Shipped |
+| Calibration requires probe; read-back + travel limits | Shipped |
+| SVG Original size / Fit to bed / Custom; reject OOB (no silent clamp) | Shipped |
+| Handwriting resample + pressure smoothing | Shipped |
+| Setup / Create / Run modes + Frame Job + Diagnostics panel | Shipped |
+| USB reconnect recovery, CI, notarization, DMG | Deferred |
+
+## Page & Batch Composer (in progress)
+
+| Need | Status |
+|------|--------|
+| True-size page formats on 390×200 bed (A4/A5/envelope/card/custom) | Shipped |
+| SVG / text / handwriting elements with move/rotate/scale/duplicate | Shipped |
+| Pen & Layer Studio (pressure, feed, delay, passes, colour) | Shipped |
+| Path optimisation + draw/travel/ETA | Shipped |
+| Frame Page + preflight from composed job | Shipped |
+| CSV variable-data queue with pause / skip / preview | Shipped (MVP) |
+| Reliable path-level resume, image-to-plot, camera alignment, handwriting font studio | Deferred |
+
 ## Deferred
 
-Handwriting font libraries / Bachin Write Android sync, Excel/tables, image raster/trace, DXF, full multi-pen gallery UI, laser mode, Windows host, iOS (needs Wi‑Fi/BLE bridge), App Store polish, Inkscape extension that owns the serial port.
+Handwriting font libraries / Bachin Write Android sync, Excel/tables, image raster/trace, DXF, laser mode, Windows host, iOS (needs Wi‑Fi/BLE bridge), App Store polish, Inkscape extension that owns the serial port, camera registration, path-level resume after disconnect.

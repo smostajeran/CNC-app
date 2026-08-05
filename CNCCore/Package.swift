@@ -8,11 +8,17 @@ let package = Package(
     ],
     products: [
         .library(name: "CNCCore", targets: ["CNCCore"]),
+        .executable(name: "ta4demo", targets: ["TA4Demo"]),
     ],
     targets: [
         .target(
             name: "CNCCore",
             path: "Sources/CNCCore"
+        ),
+        .executableTarget(
+            name: "TA4Demo",
+            dependencies: ["CNCCore"],
+            path: "Sources/TA4Demo"
         ),
         .testTarget(
             name: "CNCCoreTests",

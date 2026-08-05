@@ -1,5 +1,19 @@
 import Foundation
 
+public enum GRBLClientError: Error, LocalizedError, Equatable {
+    case unlockFailed(String)
+    case commandTimeout(String)
+    case settingRejected(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unlockFailed(let detail): return detail
+        case .commandTimeout(let detail): return detail
+        case .settingRejected(let detail): return detail
+        }
+    }
+}
+
 public protocol GRBLTransport: AnyObject {
     var isOpen: Bool { get }
     func open(path: String, baudRate: Int) throws
@@ -86,8 +100,69 @@ public final class GRBLClient: @unchecked Sendable {
         try sendRealtime(GRBLRealtime.status)
     }
 
+    /// Clear Alarm (`$X`).
+    ///
+    /// If the controller is already in Alarm (typical after E-Stop → ALARM:3), send `$X`
+    /// first — another soft-reset only re-locks the machine. Soft-reset then `$X` is used
+    /// when the buffer may be stuck and Alarm is not already reported.
+    /// Polling is paused so drain/`ok` collection cannot race the status timer.
     public func unlock() throws {
+        stopPolling()
+        defer { startPolling() }
+
+        let alreadyAlarm = lastStatus.state.localizedCaseInsensitiveContains("alarm")
+        if alreadyAlarm {
+            if try sendUnlockAndConfirm() { return }
+        }
+
+        try softReset()
+        Thread.sleep(forTimeInterval: 0.4)
+        _ = try drain(timeout: 0.35)
+        guard try sendUnlockAndConfirm() else {
+            throw GRBLClientError.unlockFailed(
+                "Controller did not leave Alarm after $X. Check USB/power, then try Unlock again."
+            )
+        }
+    }
+
+    /// Returns true when `$X` is accepted and a fresh status (if any) is not Alarm.
+    private func sendUnlockAndConfirm() throws -> Bool {
         try sendLine("$X")
+        let response = try collectUntilOk(timeout: 2.5, requireOk: true)
+        let lower = response.lowercased()
+        if lower.contains("error:") {
+            throw GRBLClientError.unlockFailed("Unlock rejected: \(response)")
+        }
+        try requestStatus()
+        Thread.sleep(forTimeInterval: 0.1)
+        let drained = try drain(timeout: 0.25)
+        if drained.contains("<") {
+            return !lastStatus.state.localizedCaseInsensitiveContains("alarm")
+        }
+        // `$X` ok with no status report yet — treat as unlocked (E-Stop ALARM:3 case).
+        if lastStatus.state.localizedCaseInsensitiveContains("alarm") {
+            lastStatus = GRBLStatus(
+                state: "Idle",
+                mpos: lastStatus.mpos,
+                wpos: lastStatus.wpos,
+                wco: lastStatus.wco,
+                sawMPos: lastStatus.sawMPos,
+                sawWPos: lastStatus.sawWPos,
+                sawWCO: lastStatus.sawWCO,
+                pins: lastStatus.pins,
+                raw: lastStatus.raw
+            )
+            onStatus?(lastStatus)
+        }
+        return true
+    }
+
+    /// Home X and Y against the machine end switches (GRBL `$H`).
+    /// Lifts the pen first so the tip clears the bed while the gantry seeks the limits.
+    public func homeXY(machine: MachineProfile) throws {
+        try penUp(machine)
+        try sendLine("$H")
+        appendConsole("--- Homing X/Y ($H) — seeking end switches ---")
     }
 
     public func halt() throws {
@@ -96,17 +171,18 @@ public final class GRBLClient: @unchecked Sendable {
         try softReset()
     }
 
+    /// Jog in the UI sense (+X = right, +Y = up on the bed preview).
+    /// Direction invert is applied only by GRBL `$3` — never also in software.
+    /// (Host-side negation while `$3` is set made jog look correct but sent Start jobs the opposite way.)
     public func jog(dx: Double, dy: Double, dz: Double = 0, feed: Double, machine: MachineProfile) throws {
-        let x = machine.invertX ? -dx : dx
-        let y = machine.invertY ? -dy : dy
-        let z = machine.invertZ ? -dz : dz
-        // GRBL 1.1 jogging
+        // `machine` kept for API stability; jog feed is passed explicitly by callers.
         var parts = ["$J=G91 G21"]
-        if x != 0 { parts.append("X\(fmt(x))") }
-        if y != 0 { parts.append("Y\(fmt(y))") }
-        if z != 0 { parts.append("Z\(fmt(z))") }
+        if dx != 0 { parts.append("X\(fmt(dx))") }
+        if dy != 0 { parts.append("Y\(fmt(dy))") }
+        if dz != 0 { parts.append("Z\(fmt(dz))") }
         parts.append("F\(fmt(feed))")
         try sendLine(parts.joined(separator: " "))
+        _ = machine
     }
 
     public func penUp(_ machine: MachineProfile) throws {
@@ -126,6 +202,52 @@ public final class GRBLClient: @unchecked Sendable {
     public func goToOrigin(machine: MachineProfile) throws {
         try penUp(machine)
         try sendLine("G90 G0 X0 Y0")
+    }
+
+    /// Write a GRBL `$` setting (e.g. `$100=80`) and wait for `ok`.
+    /// Waiting is required so a lagged `ok` cannot be consumed as acknowledgement of a later job line.
+    public func setSetting(_ key: String, value: Double) throws {
+        stopPolling()
+        defer { startPolling() }
+        let name = key.hasPrefix("$") ? key : "$\(key)"
+        try sendLine("\(name)=\(fmt(value))")
+        let response = try collectUntilOk(timeout: 2.0, requireOk: true)
+        let lower = response.lowercased()
+        if lower.contains("error:") {
+            throw GRBLClientError.settingRejected("\(name)=\(fmt(value)) rejected: \(response)")
+        }
+    }
+
+    /// Soft max travel in mm (`$130` / `$131`).
+    public func applyTravelLimits(x: Double, y: Double) throws {
+        try setSetting("$130", value: x)
+        try setSetting("$131", value: y)
+    }
+
+    /// Steps per mm (`$100` / `$101`).
+    public func applyStepsPerMm(x: Double?, y: Double?) throws {
+        if let x { try setSetting("$100", value: x) }
+        if let y { try setSetting("$101", value: y) }
+    }
+
+    /// Write steps/mm, then read `$$` back and return the confirmed values.
+    public func applyStepsPerMmWithReadback(x: Double?, y: Double?) throws -> (x: Double?, y: Double?) {
+        stopPolling()
+        defer { startPolling() }
+        try applyStepsPerMm(x: x, y: y)
+        Thread.sleep(forTimeInterval: 0.15)
+        _ = try drain(timeout: 0.2)
+        try sendLine("$$")
+        let text = try collectUntilOk(timeout: 3.0)
+        let settings = GRBLProbeResult.parseSettings(text)
+        return (settings["$100"], settings["$101"])
+    }
+
+    /// Brief pen-down mark on paper, then lift (for calibration dots).
+    public func markPoint(machine: MachineProfile, dwellSeconds: Double = 0.15) throws {
+        try penDown(machine)
+        Thread.sleep(forTimeInterval: dwellSeconds)
+        try penUp(machine)
     }
 
     public func probe() throws -> GRBLProbeResult {
@@ -151,6 +273,17 @@ public final class GRBLClient: @unchecked Sendable {
         appendConsole(result.buildInfo)
         appendConsole(result.settingsText)
         return result
+    }
+
+    /// Read `$$` only — no soft-reset. Safe during an open calibration wizard.
+    public func readSettings() throws -> [String: Double] {
+        stopPolling()
+        defer { startPolling() }
+        _ = try drain(timeout: 0.15)
+        try sendLine("$$")
+        let text = try collectUntilOk(timeout: 3.0)
+        appendConsole(text)
+        return GRBLProbeResult.parseSettings(text)
     }
 
     // MARK: - Internals
@@ -219,7 +352,7 @@ public final class GRBLClient: @unchecked Sendable {
         return chunks.joined(separator: "\n")
     }
 
-    private func collectUntilOk(timeout: TimeInterval) throws -> String {
+    private func collectUntilOk(timeout: TimeInterval, requireOk: Bool = false) throws -> String {
         let deadline = Date().addingTimeInterval(timeout)
         var lines: [String] = []
         while Date() < deadline {
@@ -232,8 +365,18 @@ public final class GRBLClient: @unchecked Sendable {
                 if line == "ok" {
                     return lines.joined(separator: "\n")
                 }
-                lines.append(line)
+                if line.hasPrefix("error:") || line.hasPrefix("ALARM") {
+                    lines.append(line)
+                    if requireOk {
+                        return lines.joined(separator: "\n")
+                    }
+                } else {
+                    lines.append(line)
+                }
             }
+        }
+        if requireOk {
+            throw GRBLClientError.commandTimeout("Timed out waiting for ok from controller.")
         }
         return lines.joined(separator: "\n")
     }

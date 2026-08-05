@@ -1,59 +1,150 @@
 import Foundation
 
-/// Drives a `GCodeStreamer` against a `GRBLClient` using the character window.
+/// Drives a `GCodeStreamer` through a `CommandCoordinator` (exclusive serial ownership).
+///
+/// Streamer mutations and `pump()` always run on `queue` so the main thread (UI /
+/// start/pause/cancel) cannot race the timer / serial-response path.
 public final class JobRunner: @unchecked Sendable {
     public let streamer = GCodeStreamer()
+    private weak var coordinator: CommandCoordinator?
     private weak var client: GRBLClient?
     private var pumpTimer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "cnc.job.runner")
     private var lastProgressEmit = Date.distantPast
+    private var statusPollCount = 0
 
     public var onProgress: ((Double, StreamerState) -> Void)?
     public var onState: ((StreamerState) -> Void)?
+    public var onPenChange: (() -> Void)?
 
     public init() {}
 
+    public func attach(coordinator: CommandCoordinator, client: GRBLClient) {
+        self.coordinator = coordinator
+        self.client = client
+        client.onLine = { [weak self] line in
+            self?.queue.async {
+                self?.handleIncoming(line)
+            }
+        }
+        // Note: AppModel also observes status; Idle completion is polled via requestStatus.
+    }
+
+    /// Test helper without coordinator.
     public func attach(client: GRBLClient) {
         self.client = client
         client.onLine = { [weak self] line in
             self?.queue.async {
-                self?.streamer.handleResponse(line)
-                self?.emit(force: true)
-                self?.pump()
+                self?.handleIncoming(line)
             }
         }
     }
 
     public func loadGCode(_ text: String) {
-        streamer.load(text: text)
-        emit(force: true)
+        queue.sync {
+            streamer.load(text: text)
+            emit(force: true)
+        }
     }
 
-    public func start() {
-        streamer.start()
-        emit(force: true)
-        startPump()
-        pump()
+    public func start() throws {
+        if let coordinator {
+            try coordinator.beginStreaming()
+        }
+        queue.sync {
+            streamer.start()
+            emit(force: true)
+            startPump()
+            pump()
+        }
     }
 
     public func pause() {
-        streamer.pause()
-        try? client?.feedHold()
-        emit(force: true)
+        queue.sync {
+            streamer.pause()
+            try? feedHold()
+            emit(force: true)
+        }
     }
 
     public func resume() {
-        streamer.resume()
-        try? client?.cycleStart()
-        emit(force: true)
-        pump()
+        queue.sync {
+            do {
+                if streamer.state == .waitingForPenChange, let coordinator {
+                    try coordinator.resumeStreamingAfterPenChange()
+                }
+                streamer.resume()
+                if streamer.state != .waitingForPenChange {
+                    try cycleStart()
+                }
+                emit(force: true)
+                pump()
+            } catch {
+                streamer.handleResponse("error:resume_blocked")
+                emit(force: true)
+            }
+        }
     }
 
     public func cancel() {
-        streamer.cancel()
-        try? client?.halt()
-        stopPump()
+        queue.sync {
+            streamer.cancel()
+            try? halt()
+            coordinator?.endStreaming()
+            stopPump()
+            emit(force: true)
+        }
+    }
+
+    /// Drop job ownership and clear Fault/Cancelled without soft-resetting the controller.
+    /// Use before Unlock — `cancel()` calls halt/soft-reset and re-triggers GRBL ALARM:3.
+    public func abandonWithoutReset() {
+        queue.sync {
+            streamer.reset()
+            coordinator?.endStreaming()
+            stopPump()
+            emit(force: true)
+        }
+    }
+
+    /// Call when a status report shows Idle (finalizes ack-complete jobs).
+    public func noteStatus(_ status: GRBLStatus) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if self.streamer.awaitingIdleForCompletion,
+               status.state.lowercased().contains("idle") {
+                self.streamer.noteMachineIdle()
+                if self.streamer.state == .completed {
+                    self.coordinator?.endStreaming()
+                    self.stopPump()
+                }
+                self.emit(force: true)
+            }
+        }
+    }
+
+    private func handleIncoming(_ line: String) {
+        let previous = streamer.state
+        streamer.handleResponse(line)
+        if streamer.state == .waitingForPenChange, previous != .waitingForPenChange {
+            try? coordinator?.enterPenChangeWait()
+            // Pen-change UI callback — hop to main so SwiftUI updates are safe.
+            let callback = onPenChange
+            DispatchQueue.main.async { callback?() }
+        }
+        // Status reports also arrive on the line stream — finalize Idle-gated completion
+        // even when AppModel has not wired `noteStatus`.
+        if let status = GRBLStatus.parse(line),
+           streamer.awaitingIdleForCompletion,
+           status.state.lowercased().contains("idle") {
+            streamer.noteMachineIdle()
+            if streamer.state == .completed {
+                coordinator?.endStreaming()
+                stopPump()
+            }
+        }
         emit(force: true)
+        pump()
     }
 
     private func startPump() {
@@ -73,23 +164,35 @@ public final class JobRunner: @unchecked Sendable {
     }
 
     private func pump() {
-        guard let client else { return }
-        // Fill GRBL RX window with as many lines as fit.
+        statusPollCount += 1
+        if streamer.awaitingIdleForCompletion, statusPollCount % 10 == 0 {
+            try? requestStatus()
+        }
+
         while let line = streamer.nextLineToSend() {
             do {
-                try client.sendLine(line)
+                if let coordinator {
+                    try coordinator.sendJobLine(line)
+                } else if let client {
+                    try client.sendLine(line)
+                } else {
+                    return
+                }
             } catch {
                 streamer.handleResponse("error:send_failed")
+                coordinator?.endStreaming()
                 stopPump()
                 emit(force: true)
                 return
             }
         }
-        if streamer.state == .completed || streamer.state == .cancelled {
+
+        switch streamer.state {
+        case .completed, .cancelled, .fault:
+            coordinator?.endStreaming()
             stopPump()
-        }
-        if case .fault = streamer.state {
-            stopPump()
+        default:
+            break
         }
         emit(force: false)
     }
@@ -100,7 +203,37 @@ public final class JobRunner: @unchecked Sendable {
             return
         }
         lastProgressEmit = now
-        onProgress?(streamer.progress, streamer.state)
-        onState?(streamer.state)
+        var progress = streamer.progress
+        if streamer.awaitingIdleForCompletion {
+            progress = min(progress, 0.99)
+        }
+        let state = streamer.state
+        let progressHandler = onProgress
+        let stateHandler = onState
+        // Always deliver UI callbacks on the main queue.
+        DispatchQueue.main.async {
+            progressHandler?(progress, state)
+            stateHandler?(state)
+        }
+    }
+
+    private func feedHold() throws {
+        if let coordinator { try coordinator.feedHold() }
+        else if let client { try client.feedHold() }
+    }
+
+    private func cycleStart() throws {
+        if let coordinator { try coordinator.cycleStart() }
+        else if let client { try client.cycleStart() }
+    }
+
+    private func halt() throws {
+        if let coordinator { try coordinator.halt() }
+        else if let client { try client.halt() }
+    }
+
+    private func requestStatus() throws {
+        if let coordinator { try coordinator.requestStatus() }
+        else if let client { try client.requestStatus() }
     }
 }

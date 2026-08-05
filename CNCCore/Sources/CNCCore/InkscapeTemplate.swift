@@ -7,7 +7,7 @@ public enum InkscapeTemplate {
         let h = profile.travelY
         return """
         <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-        <!-- TA4Host Inkscape template: \(Int(w))×\(Int(h)) mm, origin bottom-left on machine -->
+        <!-- Quill Inkscape template: \(Int(w))×\(Int(h)) mm, origin bottom-left on machine -->
         <svg xmlns="http://www.w3.org/2000/svg"
              xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
              width="\(fmt(w))mm" height="\(fmt(h))mm"

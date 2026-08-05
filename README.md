@@ -1,6 +1,8 @@
-# CNC-app / TA4Host
+# Quill (CNC-app)
 
 Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replacement for the outdated Panda / Bachin Draw software.
+
+**Quill is the only app.** An earlier working name `TA4Host` appeared on some branches; that folder/target is retired. Use `Quill/` / `Quill.app` / scheme `Quill`.
 
 ## Docs
 
@@ -13,8 +15,8 @@ Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replaceme
 | Path | Role |
 |------|------|
 | `CNCCore/` | Swift package — GRBL, serial, streaming, SVG→G-code, text, normalizer |
-| `TA4Host/` | SwiftUI macOS app |
-| `project.yml` | XcodeGen spec → `TA4Host.xcodeproj` |
+| `Quill/` | SwiftUI macOS app (**main product**) |
+| `project.yml` | XcodeGen spec → `Quill.xcodeproj` |
 | `scripts/probe-grbl.py` | CLI probe for `$I` / `$$` |
 | `scripts/send-gcode.py` | Headless G-code streamer |
 
@@ -24,26 +26,76 @@ Native **macOS** host for the Bachin **T-A4** pen plotter — a modern replaceme
 cd /path/to/CNC-app
 brew install xcodegen   # if needed
 ./scripts/generate-xcode.sh
-open TA4Host.xcodeproj
+open Quill.xcodeproj
 ```
 
-CLI checks:
+CLI checks / build:
 
 ```bash
 swift test --package-path CNCCore
+# Full macOS app (requires Xcode + XcodeGen on a Mac):
+./scripts/build-mac.sh
+# Or manually:
 xcodegen generate --spec project.yml
-xcodebuild -scheme TA4Host -configuration Debug build
+xcodebuild -scheme Quill -configuration Debug build
 ```
 
-## Inkscape → TA4Host workflow
+## Inkscape → Quill workflow
 
 1. In the app: **Inkscape Template…** (or menu) → save `TA4-workspace.svg` (390×200 mm).
 2. Open the template in Inkscape. Set document units to **mm**. Draw on `Pen1` / `Pen2` layers.
 3. **Path → Object to Path** before saving.
-4. Open the SVG in TA4Host (or drag onto the job pane). Enable **Watch job file** to reload on Save.
+4. Open the SVG in Quill (or drag onto the job pane). Enable **Watch job file** to reload on Save.
 5. Different stroke colors / layers insert an `M0` pen-change pause — swap pens, then **Resume**.
 
 Foreign G-code from Candle / plotter Inkscape extensions that uses `M3`/`M5`/`SM03` is rewritten to motor-Z moves on load.
+
+## Handwriting pressure → Z
+
+The TA-4 has no force sensor — pressure is approximated by **motor Z depth** after paper contact.
+
+1. Sidebar **Ink → Show ink canvas**.
+2. Draw with a stylus (recommended: Wacom / Sidecar Apple Pencil). Pressure modulates line weight in the canvas and `Z` in G-code.
+3. Without a stylus, trackpad/mouse uses a **speed proxy** (faster strokes → lighter pressure).
+4. Calibrate **Light Z** / **Hard Z** in Settings; use **Test pressure sweep** on the machine.
+5. Soft markers and fountain pens respond better than hard ballpoints; a slightly springy pen holder helps.
+
+SVG paths with varying `stroke-width` also map to pressure when imported. Save ink as `.ta4ink` or export SVG for Inkscape.
+
+## Modes (Liquid Glass hobbyist UI)
+
+Guided navigation with the Quill brand header and frosted glass panels:
+
+**Setup → Move → Calibrate → Draw → Compose → Run → Advanced**
+
+- **Setup:** USB connect, Check machine (firmware assessment)
+- **Move:** jog pad, pen up/down
+- **Calibrate:** paper size, start corner, ruler check (+ axis scale wizard)
+- **Draw:** open SVG/G-code/ink, preview, Start/Hold/Resume
+- **Compose:** true-size Page & Batch Composer (pens, ETA, CSV queue)
+- **Run:** preflight, Frame, Start / Hold / Resume / Stop
+- **Advanced:** unlock, soft/factory reset, axis invert, diagnostics console
+
+Manual console/jog/probe stay locked while a job owns the serial port.
+
+### Page composer quick start
+
+1. **Compose** → choose A4 / A5 / envelope / invitation / custom page size; place paper origin on the bed.
+2. Add single-line text, SVG (true size), or handwriting; assign layers to pens (pressure, feed, passes).
+3. Review draw/travel distance and ETA; enable **Optimize paths** to cut pen-up travel.
+4. **Frame Page** (pen up) then **Preflight & Run**.
+5. For mail-merge: put `{name}` in text, **Import CSV…**, preview/skip pages, **Queue next page** (pauses for paper change).
+
+## Axis scale wizard (10 mm = 10 mm)
+
+**Setup → Axis scale wizard…**
+
+1. Put a blank white sheet under the pen; set zero at the start corner; **Probe** first.
+2. For X (then Y): mark point 1 → move a known distance (only moves that fit remaining travel) → mark point 2.
+3. Measure between the marks with a ruler and enter the real length.
+4. Quill writes `$100`/`$101`, reads them back, and rolls back if verification fails.
+
+Longer spans (50–100 mm) give a more accurate scale; the goal is still 1:1 (10 mm commanded → 10 mm on paper).
 
 ## Probe / stream (USB)
 
