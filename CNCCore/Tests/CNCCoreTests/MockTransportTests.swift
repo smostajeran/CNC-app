@@ -71,4 +71,40 @@ final class GRBLClientProbeTests: XCTestCase {
         XCTAssertNoThrow(try coord.homeXY(machine: .ta4))
         client.disconnect()
     }
+
+    func testUnlockSoftResetsThenSendsDollarX() throws {
+        let transport = MockTransport()
+        let client = GRBLClient(transport: transport)
+        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        transport.written.removeAll()
+        try client.unlock()
+        XCTAssertTrue(transport.written.contains(Data([GRBLRealtime.softReset])), "unlock should soft-reset first")
+        let lines = transport.written.compactMap { String(data: $0, encoding: .utf8) }
+        XCTAssertTrue(lines.contains { $0 == "$X\n" || $0.hasPrefix("$X") }, "unlock should send $X")
+        XCTAssertTrue(transport.written.contains(Data([GRBLRealtime.status])), "unlock should request status")
+        client.disconnect()
+    }
+
+    func testCoordinatorUnlockAllowedWhileStreamingAndClearsBusy() throws {
+        let transport = MockTransport()
+        let client = GRBLClient(transport: transport)
+        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        let coord = CommandCoordinator(client: client)
+        try coord.beginStreaming()
+        XCTAssertEqual(coord.busyReason, .streaming)
+        XCTAssertNoThrow(try coord.unlock())
+        XCTAssertNil(coord.busyReason, "unlock must clear job ownership after controller reset")
+        client.disconnect()
+    }
+
+    func testCoordinatorUnlockAllowedWhileProbing() throws {
+        let transport = MockTransport()
+        let client = GRBLClient(transport: transport)
+        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        let coord = CommandCoordinator(client: client)
+        try coord.beginProbing()
+        XCTAssertNoThrow(try coord.unlock())
+        XCTAssertNil(coord.busyReason)
+        client.disconnect()
+    }
 }

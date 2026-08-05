@@ -173,14 +173,18 @@ public final class CommandCoordinator: @unchecked Sendable {
         try client.setSetting(key, value: value)
     }
 
+    /// Always allowed when connected — recovery must not be blocked by busy state.
     public func softReset() throws {
-        try requireManual()
+        try requireConnected()
         try client.softReset()
+        clearControllerOwnedBusy()
     }
 
+    /// Always allowed when connected — soft-reset + `$X` to clear Alarm even after E-Stop / probe hang.
     public func unlock() throws {
-        try requireManual()
+        try requireConnected()
         try client.unlock()
+        clearControllerOwnedBusy()
     }
 
     /// Home X/Y to the physical end switches via GRBL `$H`.
@@ -189,10 +193,13 @@ public final class CommandCoordinator: @unchecked Sendable {
         try client.homeXY(machine: machine)
     }
 
-    /// Always allowed — emergency / hold / status.
+    /// Always allowed — emergency / hold / status / unlock recovery.
     public func feedHold() throws { try client.feedHold() }
     public func cycleStart() throws { try client.cycleStart() }
-    public func halt() throws { try client.halt() }
+    public func halt() throws {
+        try client.halt()
+        clearControllerOwnedBusy()
+    }
     public func requestStatus() throws { try client.requestStatus() }
 
     public func probe() throws -> GRBLProbeResult {
@@ -209,6 +216,12 @@ public final class CommandCoordinator: @unchecked Sendable {
 
     // MARK: - Internals
 
+    private func requireConnected() throws {
+        guard client.connectionState == .connected else {
+            throw CommandCoordinatorError.notConnected
+        }
+    }
+
     private func requireManual() throws {
         lock.lock()
         let reason = busy
@@ -217,8 +230,21 @@ public final class CommandCoordinator: @unchecked Sendable {
         if let reason, reason != .calibrating {
             throw CommandCoordinatorError.busy(reason)
         }
-        guard client.connectionState == .connected else {
-            throw CommandCoordinatorError.notConnected
+        try requireConnected()
+    }
+
+    /// After soft-reset / halt / unlock the controller has dropped any in-flight motion.
+    /// Clear job/probe ownership so Unlock cannot stay stuck behind a dead busy flag.
+    /// Keep `.calibrating` — that is a Quill wizard session, not controller ownership.
+    private func clearControllerOwnedBusy() {
+        lock.lock()
+        let previous = busy
+        if previous == .streaming || previous == .waitingForPenChange || previous == .probing {
+            busy = nil
+        }
+        lock.unlock()
+        if previous == .streaming || previous == .waitingForPenChange || previous == .probing {
+            onBusyChange?(nil)
         }
     }
 

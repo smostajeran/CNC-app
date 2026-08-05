@@ -308,17 +308,56 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func softReset() { try? coordinator.softReset() }
-    func unlock() { try? coordinator.unlock() }
+    func softReset() {
+        do {
+            try coordinator.softReset()
+            console.append("--- Soft reset ---")
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Clear Locked/Alarm: soft-reset + `$X`. Always allowed while connected (not blocked by probe/job busy).
+    func unlock() {
+        lastError = nil
+        penChangeMessage = nil
+        runner.cancel()
+        do {
+            try coordinator.unlock()
+            console.append("--- Unlock: soft reset + $X ---")
+            motionWarning = nil
+            if noticeTitle == "Emergency stop" {
+                noticeTitle = nil
+            }
+            // Status arrives asynchronously; if Alarm persists, tell the user what to try next.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self, self.isConnected, self.isAlarm else { return }
+                self.lastError = "Still locked after Unlock. Confirm 12 V power, open Advanced → Soft reset, then Unlock again. If soft limits ($20) are on, set $20=0 until the machine is homed."
+                self.motionWarning = self.lastError
+            }
+        } catch {
+            lastError = error.localizedDescription
+            motionWarning = error.localizedDescription
+        }
+    }
 
     /// Emergency stop: cancel any job, feed-hold, then soft-reset the controller.
     func halt() {
         penChangeMessage = nil
         runner.cancel()
-        try? coordinator.halt()
-        noticeTitle = "Emergency stop"
-        motionWarning = "Motion halted and the controller was reset. If the header shows Locked, tap Unlock before moving again. Soft reset in Advanced if Unlock alone does not clear it."
-        console.append("--- Emergency stop (feed hold + soft reset) ---")
+        do {
+            try coordinator.halt()
+            noticeTitle = "Emergency stop"
+            motionWarning = "Motion halted and the controller was reset. If the header shows Locked, tap Unlock before moving again."
+            console.append("--- Emergency stop (feed hold + soft reset) ---")
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+            noticeTitle = "Emergency stop"
+            motionWarning = error.localizedDescription
+            console.append("--- Emergency stop failed: \(error.localizedDescription) ---")
+        }
     }
     func feedHold() { try? coordinator.feedHold() }
     func requestStatus() { try? coordinator.requestStatus() }

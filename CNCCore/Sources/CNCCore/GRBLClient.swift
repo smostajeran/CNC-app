@@ -86,8 +86,15 @@ public final class GRBLClient: @unchecked Sendable {
         try sendRealtime(GRBLRealtime.status)
     }
 
+    /// Clear Alarm. Soft-resets first so a stuck planner/buffer (after E-Stop or a hung probe)
+    /// cannot block the `$X` line, then unlocks and requests status.
     public func unlock() throws {
+        try softReset()
+        Thread.sleep(forTimeInterval: 0.3)
+        _ = try drain(timeout: 0.25)
         try sendLine("$X")
+        Thread.sleep(forTimeInterval: 0.05)
+        try requestStatus()
     }
 
     /// Home X and Y against the machine end switches (GRBL `$H`).
