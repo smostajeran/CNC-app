@@ -116,7 +116,6 @@ struct ContentView: View {
                     .disabled(!model.isConnected)
                 Button("Emergency Stop", role: .destructive) { model.halt() }
                     .disabled(!model.isConnected)
-                    .keyboardShortcut(".", modifiers: .command)
                     .help("Emergency stop — hold feed, cancel the job, and reset the controller (⌘.)")
             }
         }
