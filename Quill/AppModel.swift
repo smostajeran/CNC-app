@@ -49,8 +49,8 @@ final class AppModel: ObservableObject {
     }
     @Published var calibrationNote: String?
     @Published var motionWarning: String?
-    /// Title for the top status banner (`motionWarning`). Cleared with `nil` when dismissed.
-    @Published var noticeTitle: String? = "Check power"
+    /// Title for the top status banner (`motionWarning`). Empty when cleared.
+    @Published var noticeTitle: String = "Check power"
     @Published var confirmFactoryReset = false
     @Published var firmwareAssessment = FirmwareAssessment.assess(buildInfo: "")
     @Published var lastProbeBanner: String = ""
@@ -199,7 +199,7 @@ final class AppModel: ObservableObject {
                         self.motionWarning = "Controller is in Alarm — tap Unlock ($X). After Emergency Stop (ALARM:3), do not Soft reset again first."
                     }
                 } else if self.noticeTitle == "Machine locked" {
-                    self.noticeTitle = nil
+                    self.noticeTitle = ""
                     if self.motionWarning?.localizedCaseInsensitiveContains("alarm") == true {
                         self.motionWarning = nil
                     }
@@ -407,7 +407,7 @@ final class AppModel: ObservableObject {
                     if self.noticeTitle == "Emergency stop"
                         || self.noticeTitle == "Machine locked"
                         || self.noticeTitle == "Unlocking" {
-                        self.noticeTitle = nil
+                        self.noticeTitle = ""
                     }
                     self.requestStatus()
                 }
@@ -443,7 +443,7 @@ final class AppModel: ObservableObject {
                         self.noticeTitle = "Machine locked"
                     } else {
                         self.motionWarning = nil
-                        self.noticeTitle = nil
+                        self.noticeTitle = ""
                         self.console.append("--- Unlocked — ready to move ---")
                     }
                 }

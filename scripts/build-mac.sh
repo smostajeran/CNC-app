@@ -5,7 +5,23 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 SHA="$(git rev-parse --short HEAD)"
-echo "==> Building Quill tip $SHA (marketing 1.3 / build 9)"
+echo "==> Building Quill tip $SHA (marketing 1.3 / build 10)"
+
+# Self-heal stale trees that still clear noticeTitle with nil (non-optional String).
+# That combination fails Xcode with: 'nil' cannot be assigned to type 'String'.
+if grep -qF 'noticeTitle = nil' "$ROOT/Quill/AppModel.swift" 2>/dev/null; then
+  echo "==> Patching stale noticeTitle = nil → \"\" in AppModel.swift"
+  perl -i -pe 's/noticeTitle = nil/noticeTitle = ""/g' "$ROOT/Quill/AppModel.swift"
+fi
+if grep -qF 'noticeTitle: String?' "$ROOT/Quill/AppModel.swift" 2>/dev/null; then
+  echo "==> Normalizing noticeTitle back to non-optional String"
+  perl -i -pe 's/@Published var noticeTitle: String\? =/@Published var noticeTitle: String =/' "$ROOT/Quill/AppModel.swift"
+fi
+if grep -qF 'model.noticeTitle ??' "$ROOT/Quill/ContentView.swift" 2>/dev/null; then
+  echo "==> Patching ContentView noticeTitle optional fallback"
+  perl -i -pe 's/model\.noticeTitle \?\? "Notice"/model.noticeTitle.isEmpty ? "Notice" : model.noticeTitle/' \
+    "$ROOT/Quill/ContentView.swift"
+fi
 
 echo "==> Stamp git commit into BuildInfo.swift"
 "$ROOT/scripts/stamp-build-info.sh"
@@ -36,7 +52,7 @@ xcodebuild \
   -configuration Debug \
   -derivedDataPath "$ROOT/build/DerivedData" \
   MARKETING_VERSION=1.3 \
-  CURRENT_PROJECT_VERSION=9 \
+  CURRENT_PROJECT_VERSION=10 \
   CODE_SIGN_IDENTITY="-" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=YES \
@@ -70,8 +86,8 @@ GIT="$(/usr/libexec/PlistBuddy -c 'Print :QuillGitCommit' "$PLIST" 2>/dev/null |
 echo ""
 echo "Built: $APP"
 echo "Version: $SHORT ($BUILD) · $GIT"
-if [[ "$SHORT" != "1.3" || "$BUILD" != "9" ]]; then
-  echo "ERROR: expected marketing 1.3 / build 9, got $SHORT ($BUILD)" >&2
+if [[ "$SHORT" != "1.3" || "$BUILD" != "10" ]]; then
+  echo "ERROR: expected marketing 1.3 / build 10, got $SHORT ($BUILD)" >&2
   exit 1
 fi
 if [[ "$GIT" != "$SHA" ]]; then

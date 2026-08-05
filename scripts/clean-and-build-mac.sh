@@ -11,16 +11,13 @@ sleep 0.5
 SHA="$(git rev-parse --short HEAD)"
 BRANCH="$(git branch --show-current 2>/dev/null || echo '?')"
 echo "==> Tree: $BRANCH @ $SHA"
-# Catch stale checkouts that still have non-optional noticeTitle (Xcode error at AppModel.swift:202).
-if ! grep -q 'noticeTitle: String\?' "$ROOT/Quill/AppModel.swift" 2>/dev/null; then
-  echo "ERROR: Quill/AppModel.swift still has non-optional noticeTitle." >&2
-  echo "This tip needs commit 778028f+ on branch cursor/quill-precision-composer-c1ee." >&2
-  echo "Run:" >&2
-  echo "  git fetch origin" >&2
-  echo "  git checkout cursor/quill-precision-composer-c1ee" >&2
-  echo "  git pull --ff-only origin cursor/quill-precision-composer-c1ee" >&2
-  echo "  grep noticeTitle Quill/AppModel.swift | head -3   # expect: String?" >&2
-  exit 1
+
+# Prefer the PR branch that carries Compose + build fixes.
+if [[ "$BRANCH" != "cursor/quill-precision-composer-c1ee" ]]; then
+  echo "==> Note: not on cursor/quill-precision-composer-c1ee (on $BRANCH)."
+  echo "    If Build fails on noticeTitle, run:"
+  echo "      git fetch origin && git checkout cursor/quill-precision-composer-c1ee"
+  echo "      git pull --ff-only origin cursor/quill-precision-composer-c1ee"
 fi
 
 echo "==> Removing build artifacts"
@@ -51,4 +48,4 @@ echo "==> Fresh build"
 APP="$ROOT/build/DerivedData/Build/Products/Debug/Quill.app"
 echo "==> Launching Debug build (not /Applications)"
 open -n "$APP"
-echo "Confirm header shows: 1.3 (9) · $(git rev-parse --short HEAD)"
+echo "Confirm header shows: 1.3 (10) · $(git rev-parse --short HEAD)"
