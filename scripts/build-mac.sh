@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 SHA="$(git rev-parse --short HEAD)"
-echo "==> Building Quill tip $SHA (marketing 1.3 / build 8)"
+echo "==> Building Quill tip $SHA (marketing 1.3 / build 9)"
 
 echo "==> Stamp git commit into BuildInfo.swift"
 "$ROOT/scripts/stamp-build-info.sh"
@@ -70,8 +70,8 @@ GIT="$(/usr/libexec/PlistBuddy -c 'Print :QuillGitCommit' "$PLIST" 2>/dev/null |
 echo ""
 echo "Built: $APP"
 echo "Version: $SHORT ($BUILD) · $GIT"
-if [[ "$SHORT" != "1.3" || "$BUILD" != "8" ]]; then
-  echo "ERROR: expected marketing 1.3 / build 8, got $SHORT ($BUILD)" >&2
+if [[ "$SHORT" != "1.3" || "$BUILD" != "9" ]]; then
+  echo "ERROR: expected marketing 1.3 / build 9, got $SHORT ($BUILD)" >&2
   exit 1
 fi
 if [[ "$GIT" != "$SHA" ]]; then
