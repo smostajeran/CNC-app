@@ -45,4 +45,30 @@ final class GRBLClientProbeTests: XCTestCase {
         XCTAssertEqual(result.settings["$131"], 200)
         client.disconnect()
     }
+
+    func testHomeXYLiftsPenThenSendsDollarH() throws {
+        let transport = MockTransport()
+        let client = GRBLClient(transport: transport)
+        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        transport.written.removeAll()
+        try client.homeXY(machine: .ta4)
+        let lines = transport.written.compactMap { String(data: $0, encoding: .utf8) }
+        XCTAssertTrue(lines.contains { $0.hasPrefix("G90 G0 Z") }, "pen should lift before seeking switches")
+        XCTAssertTrue(lines.contains { $0 == "$H\n" || $0.hasPrefix("$H") }, "GRBL homing cycle")
+        client.disconnect()
+    }
+
+    func testCoordinatorHomeXYBlockedWhenStreaming() throws {
+        let transport = MockTransport()
+        let client = GRBLClient(transport: transport)
+        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        let coord = CommandCoordinator(client: client)
+        try coord.beginStreaming()
+        XCTAssertThrowsError(try coord.homeXY(machine: .ta4)) { err in
+            XCTAssertEqual(err as? CommandCoordinatorError, .busy(.streaming))
+        }
+        coord.endStreaming()
+        XCTAssertNoThrow(try coord.homeXY(machine: .ta4))
+        client.disconnect()
+    }
 }

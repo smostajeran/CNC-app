@@ -90,6 +90,14 @@ public final class GRBLClient: @unchecked Sendable {
         try sendLine("$X")
     }
 
+    /// Home X and Y against the machine end switches (GRBL `$H`).
+    /// Lifts the pen first so the tip clears the bed while the gantry seeks the limits.
+    public func homeXY(machine: MachineProfile) throws {
+        try penUp(machine)
+        try sendLine("$H")
+        appendConsole("--- Homing X/Y ($H) — seeking end switches ---")
+    }
+
     public func halt() throws {
         try feedHold()
         Thread.sleep(forTimeInterval: 0.05)

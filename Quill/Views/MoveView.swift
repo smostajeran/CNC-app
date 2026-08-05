@@ -3,6 +3,7 @@ import SwiftUI
 struct MoveView: View {
     @EnvironmentObject private var model: AppModel
     var onContinue: () -> Void
+    @State private var confirmHomeXY = false
 
     var body: some View {
         ScrollView {
@@ -43,6 +44,26 @@ struct MoveView: View {
                                 jogPad
                                     .padding(.vertical, 8)
 
+                                Button {
+                                    confirmHomeXY = true
+                                } label: {
+                                    Label("Home X/Y", systemImage: "house")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(!model.isConnected || !model.allowsManualCommands)
+                                .help("Drive X and Y to the physical end switches ($H). Clear the bed first.")
+                                .confirmationDialog(
+                                    "Home X and Y to the end switches?",
+                                    isPresented: $confirmHomeXY,
+                                    titleVisibility: .visible
+                                ) {
+                                    Button("Home X/Y") { model.homeXY() }
+                                    Button("Cancel", role: .cancel) {}
+                                } message: {
+                                    Text("The gantry will move until both end buttons click. Keep hands clear and remove anything that could snag the rails.")
+                                }
+
                                 HStack(spacing: 12) {
                                     Button {
                                         model.penUp()
@@ -72,6 +93,9 @@ struct MoveView: View {
                                     .font(.system(.title3, design: .rounded).monospacedDigit())
                                     .foregroundStyle(Theme.ink)
                                 Text("If nothing moves, check the 12V adapter and blue power switch — USB can connect while motors are off.")
+                                    .font(Theme.captionFont)
+                                    .foregroundStyle(.secondary)
+                                Text("Home X/Y seeks the two end buttons so the controller knows the corner of the bed. After homing, jog to your page corner and set zero in Calibrate.")
                                     .font(Theme.captionFont)
                                     .foregroundStyle(.secondary)
                                 DisclosureGroup("Pen heights (mm)") {

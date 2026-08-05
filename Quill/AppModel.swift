@@ -385,6 +385,27 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Drive X and Y to the physical end switches (GRBL `$H`).
+    /// Clear paper clips / obstacles first — the gantry will move until both switches click.
+    func homeXY() {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        guard allowsManualCommands else {
+            lastError = "Stop or finish the current job before homing."
+            return
+        }
+        do {
+            try coordinator.homeXY(machine: machine)
+            console.append("--- Homing X/Y — wait until motion stops at the end switches ---")
+            calibrationNote = "Homing X/Y. Wait until the gantry stops, then set your drawing start corner if needed."
+        } catch {
+            lastError = error.localizedDescription
+                + " If homing is disabled on the controller, enable it ($22=1) or home manually with jog."
+        }
+    }
+
     func probe() {
         guard isConnected else {
             lastError = "Connect first"

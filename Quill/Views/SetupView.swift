@@ -71,7 +71,7 @@ struct SetupView: View {
                 if model.isAlarm {
                     HelpCard(
                         title: "Machine is locked (Alarm)",
-                        message: "Open Advanced and tap Unlock, then Soft reset if needed. This is common after a power glitch or limit trip.",
+                        message: "Open Advanced and tap Unlock, then Soft reset if needed. This is common after a power glitch or hitting an end switch. After unlock, use Move → Home X/Y if you want to re-seek the limit switches.",
                         tone: .danger
                     )
                 }

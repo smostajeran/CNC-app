@@ -183,6 +183,12 @@ public final class CommandCoordinator: @unchecked Sendable {
         try client.unlock()
     }
 
+    /// Home X/Y to the physical end switches via GRBL `$H`.
+    public func homeXY(machine: MachineProfile) throws {
+        try requireManual()
+        try client.homeXY(machine: machine)
+    }
+
     /// Always allowed — emergency / hold / status.
     public func feedHold() throws { try client.feedHold() }
     public func cycleStart() throws { try client.cycleStart() }
