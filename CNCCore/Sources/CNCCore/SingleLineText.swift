@@ -46,9 +46,13 @@ public enum SingleLineText {
         text: String,
         profile: MachineProfile,
         heightMm: Double = 12,
-        origin: PlotPoint = PlotPoint(x: 10, y: 100)
+        origin: PlotPoint = PlotPoint(x: 10, y: 100),
+        handwriting: HandwritingConfig? = .ballpointNeat
     ) -> String {
         let job = plotJob(text: text, heightMm: heightMm, origin: origin)
+        if let handwriting {
+            return HandwritingSimulator.gcode(job: job, profile: profile, config: handwriting)
+        }
         return SVGToGCode.gcode(from: job, profile: profile)
     }
 

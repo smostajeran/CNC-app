@@ -122,7 +122,27 @@ public enum PageComposer {
                         )
                     }
                 }
-                let withPressure = placed.applyingPressure(layer.pen.pressure)
+                let withPressure: PlotJob
+                if layer.pen.handwritingMotion {
+                    // Pressure/velocity planning is on by default; geometric jitter is opt-in
+                    // so Compose preview and streamed G-code stay on the same XY layout.
+                    let variation: HumanVariationConfig = layer.pen.handwritingGeometryVariation
+                        ? .neat
+                        : .off
+                    let config = HandwritingConfig(
+                        instrument: layer.pen.writingInstrument,
+                        variation: variation,
+                        seed: UInt64(truncatingIfNeeded: layer.id.uuidString.hashValue)
+                            ^ UInt64(truncatingIfNeeded: el.id.uuidString.hashValue),
+                        applyGeometryVariation: layer.pen.handwritingGeometryVariation,
+                        annotatePlotJob: true
+                    )
+                    // Scale planner output around the layer's pressure bias.
+                    let enriched = HandwritingSimulator.enrich(job: placed, config: config)
+                    withPressure = rescalePressures(enriched, around: layer.pen.pressure, pen: config.pen)
+                } else {
+                    withPressure = placed.applyingPressure(layer.pen.pressure)
+                }
                 commands.append(contentsOf: withPressure.commands)
             }
             if layer.pen.pauseAfter {
@@ -336,7 +356,7 @@ public enum PageComposer {
                 lines.append("G0 X\(fmt(p.x)) Y\(fmt(p.y))")
             case .line(let p):
                 let pressure = p.pressure ?? activePen?.pressure ?? 0.5
-                let feed = activePen?.drawFeed ?? profile.drawFeed
+                let feed = p.feedMmMin ?? activePen?.drawFeed ?? profile.drawFeed
                 var zProfile = profile
                 if let down = activePen?.penDownZ { zProfile.penDownZ = down }
                 if let up = activePen?.penUpZ { zProfile.penUpZ = up }
@@ -367,5 +387,25 @@ public enum PageComposer {
 
     private static func fmt(_ v: Double) -> String {
         String(format: "%.3f", v)
+    }
+
+    /// Keep handwriting dynamics but centre the band on the layer pressure bias.
+    private static func rescalePressures(_ job: PlotJob, around bias: Double, pen: PenProfile) -> PlotJob {
+        let cmds = job.commands.map { cmd -> PlotCommand in
+            switch cmd {
+            case .move(let p):
+                return .move(p)
+            case .line(let p):
+                guard let pr = p.pressure else {
+                    return .line(p.with(pressure: bias))
+                }
+                let delta = pr - pen.basePressure
+                let scaled = HandwritingMath.clamp(bias + delta, 0, pen.maxPressureSafety)
+                return .line(p.with(pressure: scaled))
+            case .penChange(let label):
+                return .penChange(label)
+            }
+        }
+        return PlotJob(commands: cmds)
     }
 }

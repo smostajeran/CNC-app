@@ -24,7 +24,12 @@ public enum PlotGeometry {
 
     /// Extract pen-down drawing vertices from modal G-code (G1 moves while Z is down).
     public static func drawingPoints(fromGCode text: String, profile: MachineProfile = .ta4) -> [Point] {
-        let parsed = GCodeParser.parse(text, defaultFeed: profile.drawFeed, defaultRapid: profile.jogFeed)
+        let parsed = GCodeParser.parse(
+            text,
+            defaultFeed: profile.drawFeed,
+            defaultRapid: profile.jogFeed,
+            penDownZThreshold: max(profile.penUpZ - 0.5, 1.0)
+        )
         return drawingPoints(from: parsed.plotJob)
     }
 

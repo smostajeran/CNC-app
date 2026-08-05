@@ -123,20 +123,21 @@ public enum SVGToGCode {
                 lines.append("G0 X\(fmt(p.x)) Y\(fmt(p.y))")
             case .line(let p):
                 let pressure = p.pressure
+                let feed = p.feedMmMin ?? profile.drawFeed
                 if !penDown {
                     let z = profile.z(forPressure: pressure ?? 0.5)
-                    lines.append("G1 Z\(fmt(z)) F\(fmt(profile.drawFeed))")
+                    lines.append("G1 Z\(fmt(z)) F\(fmt(feed))")
                     penDown = true
                     lastPressure = pressure ?? 0.5
-                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) F\(fmt(profile.drawFeed))")
+                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) F\(fmt(feed))")
                 } else if let pressure,
                           lastPressure == nil
                             || abs(pressure - (lastPressure ?? pressure)) >= MachineProfile.pressureEpsilon {
                     let z = profile.z(forPressure: pressure)
-                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) Z\(fmt(z)) F\(fmt(profile.drawFeed))")
+                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) Z\(fmt(z)) F\(fmt(feed))")
                     lastPressure = pressure
                 } else {
-                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) F\(fmt(profile.drawFeed))")
+                    lines.append("G1 X\(fmt(p.x)) Y\(fmt(p.y)) F\(fmt(feed))")
                 }
             case .penChange(let label):
                 if penDown {
@@ -331,7 +332,12 @@ public enum SVGToGCode {
         }
 
         func apply(_ p: PlotPoint) -> PlotPoint {
-            PlotPoint(x: a * p.x + c * p.y + e, y: b * p.x + d * p.y + f, pressure: p.pressure)
+            PlotPoint(
+                x: a * p.x + c * p.y + e,
+                y: b * p.x + d * p.y + f,
+                pressure: p.pressure,
+                feedMmMin: p.feedMmMin
+            )
         }
 
         func concatenating(_ o: Affine2D) -> Affine2D {

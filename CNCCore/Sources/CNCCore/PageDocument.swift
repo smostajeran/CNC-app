@@ -54,6 +54,12 @@ public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
     public var pauseAfter: Bool
     public var penDownZ: Double?
     public var penUpZ: Double?
+    /// Instrument model for human pressure / velocity planning.
+    public var writingInstrument: WritingInstrument
+    /// When true, Compose runs the handwriting pressure/velocity pipeline on this layer’s paths.
+    public var handwritingMotion: Bool
+    /// When true, also apply small seeded XY imperfections (off by default for layout fidelity).
+    public var handwritingGeometryVariation: Bool
 
     public init(
         id: UUID = UUID(),
@@ -66,7 +72,10 @@ public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
         pauseBefore: Bool = false,
         pauseAfter: Bool = false,
         penDownZ: Double? = nil,
-        penUpZ: Double? = nil
+        penUpZ: Double? = nil,
+        writingInstrument: WritingInstrument = .ballpoint,
+        handwritingMotion: Bool = true,
+        handwritingGeometryVariation: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -79,12 +88,66 @@ public struct PenPreset: Equatable, Sendable, Codable, Identifiable, Hashable {
         self.pauseAfter = pauseAfter
         self.penDownZ = penDownZ
         self.penUpZ = penUpZ
+        self.writingInstrument = writingInstrument
+        self.handwritingMotion = handwritingMotion
+        self.handwritingGeometryVariation = handwritingGeometryVariation
     }
 
-    public static let fineliner = PenPreset(name: "Fineliner", colorHex: "#111111", pressure: 0.45, drawFeed: 1_800)
-    public static let fountain = PenPreset(name: "Fountain pen", colorHex: "#1B3A6B", pressure: 0.7, drawFeed: 1_000, liftDelayMs: 40)
-    public static let marker = PenPreset(name: "Marker", colorHex: "#C0392B", pressure: 0.85, drawFeed: 1_200, passes: 1)
-    public static let library: [PenPreset] = [.fineliner, .fountain, .marker]
+    public static let fineliner = PenPreset(
+        name: "Fineliner",
+        colorHex: "#111111",
+        pressure: 0.45,
+        drawFeed: 1_800,
+        writingInstrument: .gel
+    )
+    public static let fountain = PenPreset(
+        name: "Fountain pen",
+        colorHex: "#1B3A6B",
+        pressure: 0.22,
+        drawFeed: 900,
+        liftDelayMs: 40,
+        writingInstrument: .fountain
+    )
+    public static let marker = PenPreset(
+        name: "Marker",
+        colorHex: "#C0392B",
+        pressure: 0.20,
+        drawFeed: 1_100,
+        passes: 1,
+        writingInstrument: .marker
+    )
+    public static let ballpoint = PenPreset(
+        name: "Ballpoint",
+        colorHex: "#111111",
+        pressure: 0.55,
+        drawFeed: 1_500,
+        writingInstrument: .ballpoint
+    )
+    public static let library: [PenPreset] = [.ballpoint, .fineliner, .fountain, .marker]
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, colorHex, pressure, drawFeed, liftDelayMs, passes
+        case pauseBefore, pauseAfter, penDownZ, penUpZ
+        case writingInstrument, handwritingMotion, handwritingGeometryVariation
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex) ?? "#000000"
+        pressure = min(max(try c.decodeIfPresent(Double.self, forKey: .pressure) ?? 0.55, 0), 1)
+        drawFeed = try c.decodeIfPresent(Double.self, forKey: .drawFeed) ?? 1_500
+        liftDelayMs = try c.decodeIfPresent(Double.self, forKey: .liftDelayMs) ?? 0
+        passes = max(1, try c.decodeIfPresent(Int.self, forKey: .passes) ?? 1)
+        pauseBefore = try c.decodeIfPresent(Bool.self, forKey: .pauseBefore) ?? false
+        pauseAfter = try c.decodeIfPresent(Bool.self, forKey: .pauseAfter) ?? false
+        penDownZ = try c.decodeIfPresent(Double.self, forKey: .penDownZ)
+        penUpZ = try c.decodeIfPresent(Double.self, forKey: .penUpZ)
+        writingInstrument = try c.decodeIfPresent(WritingInstrument.self, forKey: .writingInstrument) ?? .ballpoint
+        handwritingMotion = try c.decodeIfPresent(Bool.self, forKey: .handwritingMotion) ?? true
+        handwritingGeometryVariation = try c.decodeIfPresent(Bool.self, forKey: .handwritingGeometryVariation) ?? false
+    }
 }
 
 /// Nine-point element anchor (named to avoid clashing with SwiftUI’s Anchor APIs).

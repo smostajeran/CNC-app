@@ -80,7 +80,10 @@ public enum GCodeParser {
     public static func parse(
         _ text: String,
         defaultFeed: Double = 1_500,
-        defaultRapid: Double = 3_000
+        defaultRapid: Double = 3_000,
+        /// Z below this is treated as pen-down. Use `profile.penUpZ - 0.5` so light
+        /// pressure (often Z≈1.5) still counts as drawing, not travel.
+        penDownZThreshold: Double = 4.0
     ) -> GCodeParseResult {
         let lines = GCodeStreamer.normalize(text)
         var absolute = true
@@ -99,6 +102,7 @@ public enum GCodeParser {
         var haveZ = false
         var estSeconds = 0.0
         var penDown = false
+        let downThreshold = penDownZThreshold
 
         for (idx, raw) in lines.enumerated() {
             let upper = raw.uppercased()
@@ -158,9 +162,9 @@ public enum GCodeParser {
             let kind: GCodeSegment.Kind = motion == 0 ? .rapid : .feed
             segments.append(GCodeSegment(kind: kind, x: x, y: y, z: z, lineIndex: idx, raw: raw, feed: feed))
 
-            // Pen heuristic: Z near/below 1 mm ⇒ drawing (matches TA-4 motor lift).
+            // Pen heuristic: below pen-up band ⇒ drawing (includes light pressure Z≈1.5).
             if word(upper, "Z") != nil {
-                penDown = z <= 1.0
+                penDown = z <= downThreshold
             }
             if word(upper, "X") != nil || word(upper, "Y") != nil {
                 let p = PlotPoint(x: x, y: y)

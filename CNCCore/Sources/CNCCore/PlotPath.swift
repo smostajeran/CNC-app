@@ -5,15 +5,22 @@ public struct PlotPoint: Equatable, Sendable {
     public var y: Double
     /// Normalized handwriting / stroke pressure in `0...1`. `nil` uses default pen-down Z.
     public var pressure: Double?
+    /// Optional per-point draw feed (mm/min). `nil` uses profile/pen defaults.
+    public var feedMmMin: Double?
 
-    public init(x: Double, y: Double, pressure: Double? = nil) {
+    public init(x: Double, y: Double, pressure: Double? = nil, feedMmMin: Double? = nil) {
         self.x = x
         self.y = y
         self.pressure = pressure.map { min(max($0, 0), 1) }
+        self.feedMmMin = feedMmMin.map { max($0, 1) }
     }
 
     public func with(pressure: Double?) -> PlotPoint {
-        PlotPoint(x: x, y: y, pressure: pressure)
+        PlotPoint(x: x, y: y, pressure: pressure, feedMmMin: feedMmMin)
+    }
+
+    public func with(feedMmMin: Double?) -> PlotPoint {
+        PlotPoint(x: x, y: y, pressure: pressure, feedMmMin: feedMmMin)
     }
 }
 
