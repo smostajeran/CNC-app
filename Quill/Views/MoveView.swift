@@ -161,19 +161,29 @@ struct MoveView: View {
 
     private var jogPad: some View {
         VStack(spacing: 10) {
-            jogButton("↑", help: "Move away from you") {
+            Text("Pad matches the Run/Compose preview: ↑ = +Y (top of page), → = +X (right).")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.inkMuted)
+                .multilineTextAlignment(.center)
+            jogButton("↑ +Y", help: "+Y — toward the top of the page preview") {
                 model.jog(dx: 0, dy: model.jogStep)
             }
             HStack(spacing: 10) {
-                jogButton("←", help: "Move left") {
+                jogButton("← −X", help: "−X — toward the left of the page preview") {
                     model.jog(dx: -model.jogStep, dy: 0)
                 }
-                jogButton("→", help: "Move right") {
+                jogButton("→ +X", help: "+X — toward the right of the page preview") {
                     model.jog(dx: model.jogStep, dy: 0)
                 }
             }
-            jogButton("↓", help: "Move toward you") {
+            jogButton("↓ −Y", help: "−Y — toward the bottom of the page preview") {
                 model.jog(dx: 0, dy: -model.jogStep)
+            }
+            if model.machine.invertX || model.machine.invertY {
+                Text("Axis flip is on — Save flips in Advanced if the head moves opposite the pad.")
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.caution)
+                    .multilineTextAlignment(.center)
             }
         }
         .frame(maxWidth: .infinity)

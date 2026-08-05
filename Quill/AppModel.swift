@@ -2170,13 +2170,11 @@ final class AppModel: ObservableObject {
         statusTimer?.invalidate()
         statusTimer = nil
         guard isConnected else { return }
+        // Always poll while linked so Head position stays live after Completed / return-to-origin.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isConnected else { return }
-                if self.streamState == .running || self.streamState == .paused
-                    || self.streamState == .waitingForPenChange {
-                    self.requestStatus()
-                }
+                self.requestStatus()
             }
         }
     }

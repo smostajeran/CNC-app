@@ -64,6 +64,8 @@ public enum GCodeExporter {
         if penDown {
             lines.append("G0 Z\(fmt(profile.penUpZ))")
         }
+        lines.append("G0 X0 Y0")
+        lines.append("M2")
         return lines.joined(separator: "\n")
     }
 

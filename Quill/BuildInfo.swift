@@ -5,7 +5,7 @@ import Foundation
 enum BuildInfo {
     /// Keep in sync with `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in project.yml.
     static let marketingVersionFallback = "1.3"
-    static let buildNumberFallback = "4"
+    static let buildNumberFallback = "5"
 
     /// Stamped short SHA at compile time (or `"unknown"` in the repo source tree).
     static let gitCommit = "unknown"

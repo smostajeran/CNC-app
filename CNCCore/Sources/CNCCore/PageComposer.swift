@@ -382,6 +382,9 @@ public enum PageComposer {
         if penDown {
             lines.append("G0 Z\(fmt(profile.penUpZ))")
         }
+        // Park at work origin (homed corner when G54 is left at home) with pen raised.
+        lines.append("G0 X0 Y0")
+        lines.append("M2")
         return lines.joined(separator: "\n")
     }
 

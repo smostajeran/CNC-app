@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 SHA="$(git rev-parse --short HEAD)"
-echo "==> Building Quill tip $SHA (marketing 1.3 / build 4)"
+echo "==> Building Quill tip $SHA (marketing 1.3 / build 5)"
 
 echo "==> Stamp git commit into BuildInfo.swift"
 "$ROOT/scripts/stamp-build-info.sh"

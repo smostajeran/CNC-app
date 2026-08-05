@@ -19,6 +19,12 @@ final class PageComposerTests: XCTestCase {
         XCTAssertTrue(composed.gcode.contains("G1"))
         XCTAssertGreaterThan(composed.metrics.drawDistanceMm, 0)
         XCTAssertTrue(composed.frameGCode.contains("G0 Z"))
+        // Finished jobs must park at work origin (homed corner) with pen up.
+        XCTAssertTrue(
+            composed.gcode.contains("G0 X0 Y0") || composed.gcode.contains("G0 X0.000 Y0.000"),
+            "Compose G-code should return to X0 Y0 after the last stroke"
+        )
+        XCTAssertTrue(composed.gcode.contains("M2"))
     }
 
     func testPageOutsideBedFails() {
