@@ -36,7 +36,7 @@ xcodebuild \
   -configuration Debug \
   -derivedDataPath "$ROOT/build/DerivedData" \
   MARKETING_VERSION=1.3 \
-  CURRENT_PROJECT_VERSION=4 \
+  CURRENT_PROJECT_VERSION=5 \
   CODE_SIGN_IDENTITY="-" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=YES \
@@ -70,8 +70,8 @@ GIT="$(/usr/libexec/PlistBuddy -c 'Print :QuillGitCommit' "$PLIST" 2>/dev/null |
 echo ""
 echo "Built: $APP"
 echo "Version: $SHORT ($BUILD) · $GIT"
-if [[ "$SHORT" != "1.3" || "$BUILD" != "4" ]]; then
-  echo "ERROR: expected marketing 1.3 / build 4, got $SHORT ($BUILD)" >&2
+if [[ "$SHORT" != "1.3" || "$BUILD" != "5" ]]; then
+  echo "ERROR: expected marketing 1.3 / build 5, got $SHORT ($BUILD)" >&2
   exit 1
 fi
 if [[ "$GIT" != "$SHA" ]]; then
