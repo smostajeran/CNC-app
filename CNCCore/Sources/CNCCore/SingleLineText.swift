@@ -11,12 +11,13 @@ public enum SingleLineText {
         let scale = heightMm / 1.0
         var commands: [PlotCommand] = []
         var cursorX = origin.x
-        let baseline = origin.y
+        var baseline = origin.y
+        let lineAdvance = heightMm * 1.2
 
         for ch in text {
             if ch == "\n" {
                 cursorX = origin.x
-                // callers can stack lines; single-line helper advances X only
+                baseline -= lineAdvance
                 continue
             }
             if ch == " " {

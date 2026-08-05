@@ -76,6 +76,8 @@ final class PageComposerTests: XCTestCase {
             .move(PlotPoint(x: 10, y: 5)), .line(PlotPoint(x: 18, y: 5)),   // E bottom
         ])
 
+        XCTAssertEqual(PathOptimizer.rowCount(for: job), 2)
+
         let optimized = PathOptimizer.optimize(job, mode: .serpentineRows)
         let paths = PathOptimizer.extractDrawPaths(from: optimized)
         XCTAssertEqual(paths.count, 6)
@@ -103,14 +105,101 @@ final class PageComposerTests: XCTestCase {
         XCTAssertEqual(bottomExtents[2].0, 0, accuracy: 0.01)
     }
 
+    /// Tall stick glyphs must not be shredded into LTR/RTL bands (the real mirror symptom).
+    func testSerpentineKeepsSingleTextLineAsOneRow() {
+        let style = TextBoxStyle(fontSizeMm: 12, lineSpacingMm: 3, paddingMm: 0)
+        let layout = TextLayoutEngine.layout(
+            text: "THANK YOU",
+            boxWidthMm: 140,
+            boxHeightMm: 30,
+            style: style
+        )
+        XCTAssertEqual(layout.lines.count, 1)
+        let job = TextLayoutEngine.plotJob(layout: layout, style: style)
+        XCTAssertEqual(
+            PathOptimizer.rowCount(for: job),
+            1,
+            "A single text line must be one serpentine row; 4 mm banding split glyph strokes"
+        )
+
+        let optimized = PathOptimizer.optimize(job, mode: .serpentineRows)
+        let paths = PathOptimizer.extractDrawPaths(from: optimized)
+        guard let first = paths.first, let last = paths.last else {
+            XCTFail("expected strokes")
+            return
+        }
+        // One LTR row: first stroke is leftmost, last is rightmost.
+        let firstMinX = first.points.map(\.x).min()!
+        let lastMaxX = last.points.map(\.x).max()!
+        let allMin = paths.flatMap(\.points).map(\.x).min()!
+        let allMax = paths.flatMap(\.points).map(\.x).max()!
+        XCTAssertEqual(firstMinX, allMin, accuracy: 0.05)
+        XCTAssertEqual(lastMaxX, allMax, accuracy: 0.05)
+    }
+
+    func testSerpentineTwoTextLinesAreTwoRowsWithRTLSecond() {
+        let style = TextBoxStyle(fontSizeMm: 12, lineSpacingMm: 4, paddingMm: 0)
+        let layout = TextLayoutEngine.layout(
+            text: "THANK YOU\nTHANK YOU",
+            boxWidthMm: 140,
+            boxHeightMm: 50,
+            style: style
+        )
+        XCTAssertEqual(layout.lines.count, 2)
+        let job = TextLayoutEngine.plotJob(layout: layout, style: style)
+        XCTAssertEqual(PathOptimizer.rowCount(for: job), 2)
+
+        let optimized = PathOptimizer.optimize(job, mode: .serpentineRows)
+        let paths = PathOptimizer.extractDrawPaths(from: optimized)
+        let midY = (paths.map { $0.points.map(\.y).reduce(0, +) / Double($0.points.count) }
+            .min()! + paths.map { $0.points.map(\.y).reduce(0, +) / Double($0.points.count) }
+            .max()!) / 2
+        let top = paths.filter {
+            $0.points.map(\.y).reduce(0, +) / Double($0.points.count) >= midY
+        }
+        let bottom = paths.filter {
+            $0.points.map(\.y).reduce(0, +) / Double($0.points.count) < midY
+        }
+        // Top line plotted first (LTR): its paths appear before bottom in optimized order.
+        let firstTopIdx = paths.firstIndex { path in
+            path.points.map(\.y).reduce(0, +) / Double(path.points.count) >= midY
+        }
+        let firstBotIdx = paths.firstIndex { path in
+            path.points.map(\.y).reduce(0, +) / Double(path.points.count) < midY
+        }
+        XCTAssertNotNil(firstTopIdx)
+        XCTAssertNotNil(firstBotIdx)
+        XCTAssertLessThan(firstTopIdx!, firstBotIdx!)
+
+        // Bottom (odd) row is RTL: first bottom stroke is on the right side of that line.
+        let bottomInOrder = paths.filter {
+            $0.points.map(\.y).reduce(0, +) / Double($0.points.count) < midY
+        }
+        XCTAssertFalse(bottomInOrder.isEmpty)
+        let bottomRight = bottom.map { $0.points.map(\.x).max()! }.max()!
+        XCTAssertEqual(bottomInOrder.first!.points.map(\.x).max()!, bottomRight, accuracy: 0.05)
+
+        // Centroids on each line still increase left→right when sorted (no X-mirror).
+        for band in [top, bottom] {
+            let cens = band.map { $0.points.map(\.x).reduce(0, +) / Double($0.points.count) }.sorted()
+            XCTAssertEqual(cens.count, band.count)
+            for i in 1..<cens.count {
+                XCTAssertGreaterThanOrEqual(cens[i], cens[i - 1] - 0.01)
+            }
+        }
+    }
+
     func testSerpentineKeepsMultiLineTextExtentsReadable() throws {
         var page = PageDocument(format: .a5Landscape, bedOriginX: 30, bedOriginY: 20)
+        let style = TextBoxStyle(fontSizeMm: 10, lineSpacingMm: 4, paddingMm: 2)
         page.elements = [
             PageElement(
                 name: "Thanks",
-                kind: .text("THANK YOU\nTHANK YOU", heightMm: 10),
+                kind: .textBox(text: "THANK YOU\nTHANK YOU", style: style),
                 xMm: 15,
                 yMm: 30,
+                widthMm: 120,
+                heightMm: 50,
                 layerID: page.defaultLayerID
             ),
         ]
@@ -126,6 +215,18 @@ final class PageComposerTests: XCTestCase {
             PathOptimizer.extractDrawPaths(from: plain.job).count,
             PathOptimizer.extractDrawPaths(from: serpentine.job).count
         )
+        XCTAssertEqual(PathOptimizer.rowCount(for: plain.job), 2)
+    }
+
+    func testLegacyTextNewlineAdvancesBaseline() {
+        let job = SingleLineText.plotJob(text: "HI\nYO", heightMm: 10, origin: PlotPoint(x: 0, y: 40))
+        let ys = job.commands.compactMap { cmd -> Double? in
+            switch cmd {
+            case .move(let p), .line(let p): return p.y
+            case .penChange: return nil
+            }
+        }
+        XCTAssertGreaterThan((ys.max() ?? 0) - (ys.min() ?? 0), 15, "second line must drop in Y")
     }
 
     func testOptimizePreservesPenChangeMarkers() throws {

@@ -58,9 +58,11 @@ public struct PathSegment: Equatable, Sendable {
 public enum PathOptimizeMode: Equatable, Sendable {
     /// Nearest-neighbor; may reverse individual strokes (fine for SVG, unsafe for naïve text).
     case nearestNeighbor(allowReverse: Bool)
-    /// Group strokes into horizontal rows and alternate LTR / RTL (serpentine).
-    /// RTL rows reverse both visit order and each stroke so ink stays upright and readable.
+    /// Group strokes into horizontal *text lines* and alternate LTR / RTL (serpentine).
+    /// RTL lines reverse visit order and each stroke’s vertex order (not an X-mirror).
     case serpentineRows
+    /// Group into horizontal lines and always plot left → right (no RTL passes).
+    case rowsLeftToRight
 }
 
 /// Reorder path groups to cut pen-up travel.
@@ -94,7 +96,7 @@ public enum PathOptimizer {
         return paths
     }
 
-    /// Default for Quill writing: serpentine rows so alternate lines are not mirrored.
+    /// Default for Quill writing: serpentine between true text lines (not glyph bands).
     public static func optimize(_ job: PlotJob) -> PlotJob {
         optimize(job, mode: .serpentineRows)
     }
@@ -104,8 +106,15 @@ public enum PathOptimizer {
         case .nearestNeighbor(let allowReverse):
             return nearestNeighbor(job, allowReverse: allowReverse)
         case .serpentineRows:
-            return serpentineRows(job)
+            return orderByRows(job, serpentine: true)
+        case .rowsLeftToRight:
+            return orderByRows(job, serpentine: false)
         }
+    }
+
+    /// How many horizontal lines the row clusterer finds (for tests / diagnostics).
+    public static func rowCount(for job: PlotJob) -> Int {
+        clusterRows(extractDrawPaths(from: job)).count
     }
 
     /// Nearest-neighbor with optional reverse. Keeps pen-change barriers intact when passed as separate jobs.
@@ -149,53 +158,34 @@ public enum PathOptimizer {
         return jobFromPaths(ordered)
     }
 
-    /// Plot row-by-row (by Y), alternating direction like a typewriter / plough.
+    private struct RowItem {
+        var path: PathSegment
+        var y: Double
+        var xMin: Double
+        var xMax: Double
+        var height: Double
+    }
+
+    /// Plot line-by-line (by Y). When `serpentine` is true, odd lines are visited RTL with
+    /// each stroke vertex-reversed so absolute ink stays upright and left-to-right readable.
     ///
-    /// - Even rows: left → right, strokes in original orientation.
-    /// - Odd rows: right → left, each stroke reversed so coordinates still draw upright letters.
-    ///
-    /// This prevents the classic failure mode where the gantry travels RTL but the path data
-    /// is still LTR, which makes every other line look mirrored.
-    private static func serpentineRows(_ job: PlotJob, rowToleranceMm: Double = 4.0) -> PlotJob {
+    /// Row breaks use adaptive Y gaps so strokes that belong to the *same* text line
+    /// (e.g. a T’s top bar vs stem) are not split into separate LTR/RTL bands — that
+    /// fixed-4 mm banding made every other pass through a glyph line look backwards.
+    private static func orderByRows(_ job: PlotJob, serpentine: Bool) -> PlotJob {
         let paths = extractDrawPaths(from: job)
         guard paths.count > 1 else { return job }
 
-        struct Item {
-            var path: PathSegment
-            var y: Double
-            var xMin: Double
-            var xMax: Double
-        }
-
-        var items: [Item] = paths.compactMap { path in
-            guard !path.points.isEmpty else { return nil }
-            let ys = path.points.map(\.y)
-            let xs = path.points.map(\.x)
-            let y = ys.reduce(0, +) / Double(ys.count)
-            return Item(path: path, y: y, xMin: xs.min()!, xMax: xs.max()!)
-        }
-        guard items.count > 1 else { return job }
-
-        // Top of page first (larger Y in machine space with Y-up).
-        items.sort { $0.y > $1.y }
-
-        var rows: [[Item]] = []
-        for item in items {
-            if var last = rows.last, let refY = last.first?.y, abs(item.y - refY) <= rowToleranceMm {
-                last.append(item)
-                rows[rows.count - 1] = last
-            } else {
-                rows.append([item])
-            }
-        }
+        let rows = clusterRows(paths)
+        guard rows.count >= 1 else { return job }
 
         var ordered: [PathSegment] = []
-        ordered.reserveCapacity(items.count)
+        ordered.reserveCapacity(paths.count)
         for (rowIndex, row) in rows.enumerated() {
-            let rightToLeft = rowIndex % 2 == 1
+            let rightToLeft = serpentine && rowIndex % 2 == 1
             if rightToLeft {
-                // Visit rightmost stroke first; reverse each stroke so pen enters from the right
-                // while the ink geometry of each letter stays correct (not mirrored).
+                // Visit rightmost stroke first; reverse vertices so the pen enters from the
+                // right while each letter’s geometry stays unmirrored.
                 for item in row.sorted(by: { $0.xMax > $1.xMax }) {
                     ordered.append(item.path.reversed())
                 }
@@ -206,6 +196,52 @@ public enum PathOptimizer {
             }
         }
         return jobFromPaths(ordered)
+    }
+
+    /// Cluster strokes into horizontal text lines (top → bottom in machine Y-up space).
+    private static func clusterRows(_ paths: [PathSegment]) -> [[RowItem]] {
+        var items: [RowItem] = paths.compactMap { path in
+            guard !path.points.isEmpty else { return nil }
+            let ys = path.points.map(\.y)
+            let xs = path.points.map(\.x)
+            let yMin = ys.min()!
+            let yMax = ys.max()!
+            let y = ys.reduce(0, +) / Double(ys.count)
+            return RowItem(
+                path: path,
+                y: y,
+                xMin: xs.min()!,
+                xMax: xs.max()!,
+                height: yMax - yMin
+            )
+        }
+        guard !items.isEmpty else { return [] }
+
+        // Top of page first (larger Y).
+        items.sort { $0.y > $1.y }
+
+        // Break only on gaps large enough to be inter-line, not intra-glyph.
+        // Tall stick glyphs (~font size) have stroke centroids several mm apart;
+        // a fixed 4 mm tolerance was shredding each line into LTR/RTL bands.
+        let maxHeight = items.map(\.height).max() ?? 0
+        let breakGap = max(maxHeight * 0.45, 6.0)
+
+        var rows: [[RowItem]] = []
+        for item in items {
+            if var last = rows.last {
+                let rowMeanY = last.map(\.y).reduce(0, +) / Double(last.count)
+                let gapFromPrev = abs(item.y - last.last!.y)
+                let gapFromMean = abs(item.y - rowMeanY)
+                // Same line if close to the previous stroke and to the row’s running mean.
+                if gapFromPrev <= breakGap && gapFromMean <= breakGap * 1.25 {
+                    last.append(item)
+                    rows[rows.count - 1] = last
+                    continue
+                }
+            }
+            rows.append([item])
+        }
+        return rows
     }
 
     private static func jobFromPaths(_ ordered: [PathSegment]) -> PlotJob {
