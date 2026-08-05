@@ -8,6 +8,21 @@ echo "==> Quit any running Quill"
 killall Quill 2>/dev/null || true
 sleep 0.5
 
+SHA="$(git rev-parse --short HEAD)"
+BRANCH="$(git branch --show-current 2>/dev/null || echo '?')"
+echo "==> Tree: $BRANCH @ $SHA"
+# Catch stale checkouts that still have non-optional noticeTitle (Xcode error at AppModel.swift:202).
+if ! grep -q 'noticeTitle: String\?' "$ROOT/Quill/AppModel.swift" 2>/dev/null; then
+  echo "ERROR: Quill/AppModel.swift still has non-optional noticeTitle." >&2
+  echo "This tip needs commit 778028f+ on branch cursor/quill-precision-composer-c1ee." >&2
+  echo "Run:" >&2
+  echo "  git fetch origin" >&2
+  echo "  git checkout cursor/quill-precision-composer-c1ee" >&2
+  echo "  git pull --ff-only origin cursor/quill-precision-composer-c1ee" >&2
+  echo "  grep noticeTitle Quill/AppModel.swift | head -3   # expect: String?" >&2
+  exit 1
+fi
+
 echo "==> Removing build artifacts"
 rm -rf \
   "$ROOT/build" \
