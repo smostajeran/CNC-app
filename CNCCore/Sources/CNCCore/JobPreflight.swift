@@ -50,6 +50,8 @@ public enum JobPreflight {
         /// Live GRBL positions for machine-space envelope (soft limits alone are not enough).
         machinePosition: SIMD3<Double>? = nil,
         workPosition: SIMD3<Double>? = nil,
+        /// Parsed status with WCO when available — preferred over raw mpos/wpos pair.
+        status: GRBLStatus? = nil,
         /// When true, Start requires soft limits enabled on the profile (`$20`).
         requireSoftLimits: Bool = false
     ) -> JobPreflightReport {
@@ -111,6 +113,24 @@ public enum JobPreflight {
 
         let b = parse.bounds
         let margin: Double = 0.05
+
+        // Resolve WCS offset before envelope checks. When a live status is supplied it must
+        // include WCO (or both MPos and WPos) — never assume the missing vector is zero.
+        let offset: (x: Double, y: Double)?
+        if let status {
+            offset = MotionSafety.workOffset(from: status)
+            if offset == nil {
+                issues.append(.init(
+                    severity: .error,
+                    message: "Cannot verify machine-space travel — status lacks WCO (or both MPos and WPos). Request status after Home before Start."
+                ))
+            }
+        } else if let mpos = machinePosition, let wpos = workPosition {
+            offset = MotionSafety.workOffset(machinePosition: mpos, workPosition: wpos)
+        } else {
+            offset = nil
+        }
+
         if b.width > 0 || b.height > 0 {
             if b.minX < -margin || b.minY < -margin
                 || b.maxX > profile.travelX + margin
@@ -126,8 +146,7 @@ public enum JobPreflight {
             }
 
             // Work-space bounds can look fine while G54 offset drives machine past travel.
-            if let mpos = machinePosition, let wpos = workPosition {
-                let offset = MotionSafety.workOffset(machinePosition: mpos, workPosition: wpos)
+            if let offset {
                 let machineBounds = MotionSafety.machineBounds(
                     workBounds: b,
                     offsetX: offset.x,
@@ -184,6 +203,12 @@ public enum JobPreflight {
             ))
         }
 
+        for item in parse.blocking.prefix(12) {
+            issues.append(.init(
+                severity: .error,
+                message: "Blocked command (unsafe or unsupported for plotting): \(item)"
+            ))
+        }
         for item in parse.unsupported.prefix(12) {
             issues.append(.init(severity: .warning, message: "Unsupported or risky command: \(item)"))
         }

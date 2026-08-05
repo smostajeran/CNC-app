@@ -139,6 +139,78 @@ final class JobPreflightTests: XCTestCase {
         XCTAssertTrue(g.contains("X40"))
     }
 
+    func testPreflightBlocksG28AndArcs() {
+        let g28 = JobPreflight.assess(
+            gcode: "G21\nG90\nG28\nG0 X10 Y10\n",
+            profile: .ta4,
+            machineState: "Idle",
+            workZeroKnown: true,
+            requireHomed: true,
+            isHomed: true
+        )
+        XCTAssertFalse(g28.okToStart)
+        XCTAssertTrue(g28.issues.contains { $0.severity == .error && $0.message.contains("G28") })
+
+        let arc = JobPreflight.assess(
+            gcode: "G21\nG90\nG2 X20 Y10 I5 J0 F1000\n",
+            profile: .ta4,
+            machineState: "Idle",
+            workZeroKnown: true,
+            requireHomed: true,
+            isHomed: true
+        )
+        XCTAssertFalse(arc.okToStart)
+        XCTAssertTrue(arc.issues.contains { $0.severity == .error && $0.message.uppercased().contains("G2") })
+    }
+
+    func testPreflightBlocksAlternateWCS() {
+        let report = JobPreflight.assess(
+            gcode: "G21\nG90\nG55\nG0 X10 Y10\n",
+            profile: .ta4,
+            machineState: "Idle",
+            workZeroKnown: true,
+            requireHomed: true,
+            isHomed: true
+        )
+        XCTAssertFalse(report.okToStart)
+        XCTAssertTrue(report.issues.contains { $0.severity == .error && $0.message.contains("G55") })
+    }
+
+    func testPreflightBlocksUnreliableStatusOffset() {
+        var profile = MachineProfile.ta4
+        profile.softLimitsEnabled = true
+        let status = GRBLStatus.parse("<Idle|MPos:0.000,0.000,0.000|FS:0,0>")!
+        let report = JobPreflight.assess(
+            gcode: "G21\nG90\nG0 X10 Y10\n",
+            profile: profile,
+            machineState: "Idle",
+            workZeroKnown: true,
+            requireHomed: true,
+            isHomed: true,
+            status: status,
+            requireSoftLimits: true
+        )
+        XCTAssertFalse(report.okToStart)
+        XCTAssertTrue(report.issues.contains { $0.message.contains("WCO") })
+    }
+
+    func testPreflightAllowsReliableWCOStatus() {
+        var profile = MachineProfile.ta4
+        profile.softLimitsEnabled = true
+        let status = GRBLStatus.parse("<Idle|MPos:0.000,0.000,0.000|WCO:0.000,0.000,0.000|FS:0,0>")!
+        let report = JobPreflight.assess(
+            gcode: "G21\nG90\nG0 Z5\nG0 X10 Y10\nG1 Z0 F1500\nG1 X20 Y10\nG0 Z5\n",
+            profile: profile,
+            machineState: "Idle",
+            workZeroKnown: true,
+            requireHomed: true,
+            isHomed: true,
+            status: status,
+            requireSoftLimits: true
+        )
+        XCTAssertTrue(report.okToStart, report.issues.map(\.message).joined(separator: "; "))
+    }
+
     func testCommandCoordinatorBlocksManualWhileStreaming() throws {
         let transport = MockTransport()
         let client = GRBLClient(transport: transport)

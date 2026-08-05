@@ -938,6 +938,10 @@ struct PageComposerView: View {
         removeKeyMonitor()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.window?.isKeyWindow == true else { return event }
+            // Never steal shortcuts from text fields / text views (inspector, text box editor).
+            if Self.textInputIsFocused(in: event.window) {
+                return event
+            }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let fine = model.page.editor.nudgeFineMm
             let normal = model.page.editor.nudgeNormalMm
@@ -964,6 +968,22 @@ struct PageComposerView: View {
                 return event
             }
         }
+    }
+
+    /// True when the key window’s first responder is editing text.
+    private static func textInputIsFocused(in window: NSWindow?) -> Bool {
+        guard let responder = window?.firstResponder else { return false }
+        if responder is NSTextView || responder is NSTextField { return true }
+        if let fieldEditor = window?.fieldEditor(false, for: nil), responder === fieldEditor {
+            return true
+        }
+        // SwiftUI `TextField` / `TextEditor` wrap AppKit editors in a view hierarchy.
+        var view: NSView? = responder as? NSView
+        while let current = view {
+            if current is NSTextView || current is NSTextField { return true }
+            view = current.superview
+        }
+        return false
     }
 
     private func removeKeyMonitor() {

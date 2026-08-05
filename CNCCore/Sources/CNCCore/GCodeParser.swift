@@ -38,6 +38,8 @@ public struct GCodeParseResult: Equatable, Sendable {
     public var usedInches: Bool
     public var usedRelative: Bool
     public var unsupported: [String]
+    /// Commands that must block Start (homing cycles, arcs, alternate WCS, spindle, etc.).
+    public var blocking: [String]
     public var estimatedSeconds: Double
     public var plotJob: PlotJob
 
@@ -50,6 +52,7 @@ public struct GCodeParseResult: Equatable, Sendable {
         usedInches: Bool,
         usedRelative: Bool,
         unsupported: [String],
+        blocking: [String] = [],
         estimatedSeconds: Double,
         plotJob: PlotJob
     ) {
@@ -61,6 +64,7 @@ public struct GCodeParseResult: Equatable, Sendable {
         self.usedInches = usedInches
         self.usedRelative = usedRelative
         self.unsupported = unsupported
+        self.blocking = blocking
         self.estimatedSeconds = estimatedSeconds
         self.plotJob = plotJob
     }
@@ -94,6 +98,7 @@ public enum GCodeParser {
         var segments: [GCodeSegment] = []
         var plotCommands: [PlotCommand] = []
         var unsupported: [String] = []
+        var blocking: [String] = []
         var penChanges = 0
         var usedRelative = false
         var usedInches = false
@@ -117,8 +122,19 @@ public enum GCodeParser {
             if upper.hasPrefix("G91") { absolute = false; usedRelative = true; continue }
             if upper.hasPrefix("G20") { inches = true; usedInches = true; continue }
             if upper.hasPrefix("G21") { inches = false; continue }
-            if upper.hasPrefix("G17") || upper.hasPrefix("G94") || upper.hasPrefix("G54")
-                || upper.hasPrefix("G55") || upper.hasPrefix("G28") || upper.hasPrefix("G30") {
+            if upper.hasPrefix("G17") || upper.hasPrefix("G94") {
+                continue
+            }
+            // Homing / park cycles — never silently ignore; block Start.
+            if upper.hasPrefix("G28") || upper.hasPrefix("G30") {
+                blocking.append(raw)
+                continue
+            }
+            // Alternate work coordinates: G54 is Quill’s assumed WCS; others block.
+            if upper.hasPrefix("G54") { continue }
+            if upper.hasPrefix("G55") || upper.hasPrefix("G56") || upper.hasPrefix("G57")
+                || upper.hasPrefix("G58") || upper.hasPrefix("G59") {
+                blocking.append(raw)
                 continue
             }
             if upper.hasPrefix("M2") || upper.hasPrefix("M30") || upper == "M2" || upper.hasPrefix("M02") {
@@ -131,16 +147,23 @@ public enum GCodeParser {
             if let g {
                 if g == 0 || g == 1 { motion = g }
                 if g == 2 || g == 3 {
-                    // Approximate arc as chord to endpoint (preflight still sees extent).
-                    motion = 1
-                    unsupported.append("Arc \(raw) approximated as straight chord")
+                    // Arcs are not tessellated — chord bounds under-report travel. Block Start.
+                    blocking.append("Arc \(raw) (G2/G3 not supported — bounds would be incomplete)")
+                    continue
                 }
             }
 
             let hasXYZ = upper.contains("X") || upper.contains("Y") || upper.contains("Z")
             guard hasXYZ, let motion else {
                 if looksUnsupported(upper) {
-                    unsupported.append(raw)
+                    // Spindle / probe / tool — block rather than warn-and-run.
+                    if upper.contains("M3") || upper.contains("M03") || upper.contains("M4")
+                        || upper.contains("M04") || upper.contains("M5") || upper.contains("M05")
+                        || upper.contains("G38") || upper.hasPrefix("T") {
+                        blocking.append(raw)
+                    } else {
+                        unsupported.append(raw)
+                    }
                 }
                 continue
             }
@@ -182,6 +205,7 @@ public enum GCodeParser {
             usedInches: usedInches,
             usedRelative: usedRelative,
             unsupported: Array(Set(unsupported)).sorted(),
+            blocking: Array(Set(blocking)).sorted(),
             estimatedSeconds: estSeconds,
             plotJob: job
         )

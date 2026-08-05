@@ -24,7 +24,7 @@ final class MockTransport: GRBLTransport {
         } else if data == Data([GRBLRealtime.softReset]) {
             readQueue.append(Data("Grbl 1.1f ['$' for help]\n".utf8))
         } else if data == Data([GRBLRealtime.status]) {
-            readQueue.append(Data("<Idle|MPos:0.000,0.000,0.000|FS:0,0>\n".utf8))
+            readQueue.append(Data("<Idle|MPos:0.000,0.000,0.000|WCO:0.000,0.000,0.000|FS:0,0>\n".utf8))
         } else if text.hasSuffix("\n") {
             readQueue.append(Data("ok\n".utf8))
         }

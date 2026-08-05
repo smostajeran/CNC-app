@@ -65,6 +65,11 @@ public struct GRBLStatus: Equatable, Sendable {
     public var state: String
     public var mpos: SIMD3<Double>
     public var wpos: SIMD3<Double>
+    /// Work coordinate offset from `WCO:` when present (`mpos = wpos + wco`).
+    public var wco: SIMD3<Double>
+    public var sawMPos: Bool
+    public var sawWPos: Bool
+    public var sawWCO: Bool
     public var pins: GRBLLimitPins
     public var raw: String
 
@@ -72,17 +77,30 @@ public struct GRBLStatus: Equatable, Sendable {
         state: String = "Unknown",
         mpos: SIMD3<Double> = .zero,
         wpos: SIMD3<Double> = .zero,
+        wco: SIMD3<Double> = .zero,
+        sawMPos: Bool = false,
+        sawWPos: Bool = false,
+        sawWCO: Bool = false,
         pins: GRBLLimitPins = GRBLLimitPins(),
         raw: String = ""
     ) {
         self.state = state
         self.mpos = mpos
         self.wpos = wpos
+        self.wco = wco
+        self.sawMPos = sawMPos
+        self.sawWPos = sawWPos
+        self.sawWCO = sawWCO
         self.pins = pins
         self.raw = raw
     }
 
-    /// Parse a GRBL status report like `<Idle|MPos:0.000,0.000,0.000|FS:0,0|Pn:XY>`
+    /// True when machine and work positions are known (parsed or derived via WCO).
+    public var hasReliableWorkOffset: Bool {
+        (sawMPos && sawWPos) || (sawMPos && sawWCO) || (sawWPos && sawWCO)
+    }
+
+    /// Parse a GRBL status report like `<Idle|MPos:0.000,0.000,0.000|WCO:0.000,0.000,0.000|FS:0,0>`
     public static func parse(_ line: String) -> GRBLStatus? {
         guard line.hasPrefix("<"), line.hasSuffix(">") else { return nil }
         let inner = String(line.dropFirst().dropLast())
@@ -92,12 +110,34 @@ public struct GRBLStatus: Equatable, Sendable {
         var status = GRBLStatus(state: state, raw: line)
         for part in parts.dropFirst() {
             if part.hasPrefix("MPos:") {
-                status.mpos = parseVec3(String(part.dropFirst(5))) ?? status.mpos
+                if let v = parseVec3(String(part.dropFirst(5))) {
+                    status.mpos = v
+                    status.sawMPos = true
+                }
             } else if part.hasPrefix("WPos:") {
-                status.wpos = parseVec3(String(part.dropFirst(5))) ?? status.wpos
+                if let v = parseVec3(String(part.dropFirst(5))) {
+                    status.wpos = v
+                    status.sawWPos = true
+                }
+            } else if part.hasPrefix("WCO:") {
+                if let v = parseVec3(String(part.dropFirst(4))) {
+                    status.wco = v
+                    status.sawWCO = true
+                }
             } else if part.hasPrefix("Pn:") {
                 status.pins = GRBLLimitPins.parse(part)
             }
+        }
+        // GRBL usually reports MPos|WCO or WPos|WCO — not both positions.
+        if status.sawMPos, status.sawWCO, !status.sawWPos {
+            status.wpos = status.mpos - status.wco
+            status.sawWPos = true
+        } else if status.sawWPos, status.sawWCO, !status.sawMPos {
+            status.mpos = status.wpos + status.wco
+            status.sawMPos = true
+        } else if status.sawMPos, status.sawWPos, !status.sawWCO {
+            status.wco = status.mpos - status.wpos
+            status.sawWCO = true
         }
         return status
     }

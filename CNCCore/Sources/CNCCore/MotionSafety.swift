@@ -10,6 +10,15 @@ public enum MotionSafety {
         (mpos.x - wpos.x, mpos.y - wpos.y)
     }
 
+    /// Prefer explicit WCO from the status report when available.
+    public static func workOffset(from status: GRBLStatus) -> (x: Double, y: Double)? {
+        guard status.hasReliableWorkOffset else { return nil }
+        if status.sawWCO {
+            return (status.wco.x, status.wco.y)
+        }
+        return workOffset(machinePosition: status.mpos, workPosition: status.wpos)
+    }
+
     public static func machineBounds(
         workBounds: PlotBounds,
         offsetX: Double,

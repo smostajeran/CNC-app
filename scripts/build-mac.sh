@@ -5,28 +5,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 SHA="$(git rev-parse --short HEAD)"
-echo "==> Building Quill tip $SHA (marketing 1.3 / build 11)"
+echo "==> Building Quill tip $SHA (marketing 1.3 / build 12)"
 
-# ALWAYS run — stale Mac checkouts keep `noticeTitle = nil` and Xcode fails at :202/:410.
-echo "==> Ensure noticeTitle clears compile (fix-notice-title.sh)"
-"$ROOT/scripts/fix-notice-title.sh"
-
-# ContentView may still use optional fallback from an older tip.
-if grep -qF 'model.noticeTitle ??' "$ROOT/Quill/ContentView.swift" 2>/dev/null; then
-  echo "==> Patching ContentView noticeTitle optional fallback"
-  python3 - "$ROOT/Quill/ContentView.swift" <<'PY'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1])
-t = p.read_text(encoding="utf-8")
-t2 = t.replace(
-    'model.noticeTitle ?? "Notice"',
-    'model.noticeTitle.isEmpty ? "Notice" : model.noticeTitle',
-)
-if t2 != t:
-    p.write_text(t2, encoding="utf-8")
-    print("Patched ContentView noticeTitle fallback")
-PY
+# Do not mutate Swift sources here — the stamped SHA must match the compiled tree.
+if grep -qE 'noticeTitle[[:space:]]*=[[:space:]]*nil' "$ROOT/Quill/AppModel.swift" 2>/dev/null; then
+  echo "ERROR: Quill/AppModel.swift still has noticeTitle = nil." >&2
+  echo "Pull tip a23284f+ (or later) on cursor/quill-precision-composer-c1ee." >&2
+  exit 1
 fi
 
 echo "==> Stamp git commit into BuildInfo.swift"
@@ -58,7 +43,7 @@ xcodebuild \
   -configuration Debug \
   -derivedDataPath "$ROOT/build/DerivedData" \
   MARKETING_VERSION=1.3 \
-  CURRENT_PROJECT_VERSION=11 \
+  CURRENT_PROJECT_VERSION=12 \
   CODE_SIGN_IDENTITY="-" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=YES \
@@ -92,8 +77,8 @@ GIT="$(/usr/libexec/PlistBuddy -c 'Print :QuillGitCommit' "$PLIST" 2>/dev/null |
 echo ""
 echo "Built: $APP"
 echo "Version: $SHORT ($BUILD) · $GIT"
-if [[ "$SHORT" != "1.3" || "$BUILD" != "11" ]]; then
-  echo "ERROR: expected marketing 1.3 / build 11, got $SHORT ($BUILD)" >&2
+if [[ "$SHORT" != "1.3" || "$BUILD" != "12" ]]; then
+  echo "ERROR: expected marketing 1.3 / build 12, got $SHORT ($BUILD)" >&2
   exit 1
 fi
 if [[ "$GIT" != "$SHA" ]]; then

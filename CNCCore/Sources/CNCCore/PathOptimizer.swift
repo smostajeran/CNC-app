@@ -102,6 +102,31 @@ public enum PathOptimizer {
     }
 
     public static func optimize(_ job: PlotJob, mode: PathOptimizeMode) -> PlotJob {
+        // Preserve `.penChange` barriers (pause before/after, multi-pen). Optimize each
+        // segment independently so M0 markers are never dropped by jobFromPaths.
+        var chunks: [[PlotCommand]] = [[]]
+        var barriers: [String] = []
+        for cmd in job.commands {
+            if case .penChange(let label) = cmd {
+                barriers.append(label)
+                chunks.append([])
+            } else {
+                chunks[chunks.count - 1].append(cmd)
+            }
+        }
+        var merged: [PlotCommand] = []
+        for (idx, chunk) in chunks.enumerated() {
+            if idx > 0 {
+                merged.append(.penChange(barriers[idx - 1]))
+            }
+            guard !chunk.isEmpty else { continue }
+            let optimizedChunk = optimizeChunk(PlotJob(commands: chunk), mode: mode)
+            merged.append(contentsOf: optimizedChunk.commands)
+        }
+        return PlotJob(commands: merged)
+    }
+
+    private static func optimizeChunk(_ job: PlotJob, mode: PathOptimizeMode) -> PlotJob {
         switch mode {
         case .nearestNeighbor(let allowReverse):
             return nearestNeighbor(job, allowReverse: allowReverse)

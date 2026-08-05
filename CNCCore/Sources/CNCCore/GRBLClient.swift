@@ -3,11 +3,13 @@ import Foundation
 public enum GRBLClientError: Error, LocalizedError, Equatable {
     case unlockFailed(String)
     case commandTimeout(String)
+    case settingRejected(String)
 
     public var errorDescription: String? {
         switch self {
         case .unlockFailed(let detail): return detail
         case .commandTimeout(let detail): return detail
+        case .settingRejected(let detail): return detail
         }
     }
 }
@@ -143,6 +145,10 @@ public final class GRBLClient: @unchecked Sendable {
                 state: "Idle",
                 mpos: lastStatus.mpos,
                 wpos: lastStatus.wpos,
+                wco: lastStatus.wco,
+                sawMPos: lastStatus.sawMPos,
+                sawWPos: lastStatus.sawWPos,
+                sawWCO: lastStatus.sawWCO,
                 pins: lastStatus.pins,
                 raw: lastStatus.raw
             )
@@ -198,10 +204,18 @@ public final class GRBLClient: @unchecked Sendable {
         try sendLine("G90 G0 X0 Y0")
     }
 
-    /// Write a GRBL `$` setting (e.g. `$100=80`).
+    /// Write a GRBL `$` setting (e.g. `$100=80`) and wait for `ok`.
+    /// Waiting is required so a lagged `ok` cannot be consumed as acknowledgement of a later job line.
     public func setSetting(_ key: String, value: Double) throws {
+        stopPolling()
+        defer { startPolling() }
         let name = key.hasPrefix("$") ? key : "$\(key)"
         try sendLine("\(name)=\(fmt(value))")
+        let response = try collectUntilOk(timeout: 2.0, requireOk: true)
+        let lower = response.lowercased()
+        if lower.contains("error:") {
+            throw GRBLClientError.settingRejected("\(name)=\(fmt(value)) rejected: \(response)")
+        }
     }
 
     /// Soft max travel in mm (`$130` / `$131`).

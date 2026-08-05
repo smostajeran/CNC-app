@@ -62,6 +62,8 @@ final class AppModel: ObservableObject {
     @Published var xyHomedThisSession = false
     /// Waiting for Idle after `$H` before trusting machine coordinates.
     private var awaitingHomeCompletion = false
+    /// Latched once Homing/Run is observed after `$H` — Idle alone must not fake success.
+    private var homeCycleObserved = false
 
     @Published var mode: QuillMode = .setup
     @Published var showDiagnostics = false
@@ -181,12 +183,19 @@ final class AppModel: ObservableObject {
                 let alarm = status.state.localizedCaseInsensitiveContains("alarm")
                 let idle = status.state.localizedCaseInsensitiveContains("idle")
                 if self.awaitingHomeCompletion {
+                    let homing = status.state.localizedCaseInsensitiveContains("home")
+                        || status.state.localizedCaseInsensitiveContains("run")
                     if alarm {
                         self.awaitingHomeCompletion = false
+                        self.homeCycleObserved = false
                         self.xyHomedThisSession = false
                         self.console.append("--- Homing failed (Alarm) — position not trusted for Start ---")
-                    } else if idle {
+                    } else if homing {
+                        // Require an actual homing/run phase so a pre-$H Idle cannot fake success.
+                        self.homeCycleObserved = true
+                    } else if idle, self.homeCycleObserved {
                         self.awaitingHomeCompletion = false
+                        self.homeCycleObserved = false
                         self.xyHomedThisSession = true
                         self.console.append("--- Homing complete — machine position trusted for Start ---")
                         self.calibrationNote = "Homed. Leave work zero at this origin for Compose (bed coordinates)."
@@ -214,10 +223,12 @@ final class AppModel: ObservableObject {
                     // New link — require Home before Start even if MPos reads 0,0.
                     self.xyHomedThisSession = false
                     self.awaitingHomeCompletion = false
+                    self.homeCycleObserved = false
                 }
                 if case .disconnected = state {
                     self.xyHomedThisSession = false
                     self.awaitingHomeCompletion = false
+                    self.homeCycleObserved = false
                 }
                 self.updateStatusPolling()
             }
@@ -281,6 +292,7 @@ final class AppModel: ObservableObject {
                     self.connectionState = .connected
                     self.xyHomedThisSession = false
                     self.awaitingHomeCompletion = false
+                    self.homeCycleObserved = false
                     self.noticeTitle = "Check power"
                     self.motionWarning = "USB linked. Confirm 12 V power, then Move → Home X/Y before Start. Soft limits must be on after a successful Home."
                     self.requestStatus()
@@ -307,6 +319,7 @@ final class AppModel: ObservableObject {
         motorsPowerConfirmed = false
         xyHomedThisSession = false
         awaitingHomeCompletion = false
+        homeCycleObserved = false
         updateStatusPolling()
     }
 
@@ -383,6 +396,7 @@ final class AppModel: ObservableObject {
         // Alarm / E-Stop may mean lost steps — require Home before the next Start.
         xyHomedThisSession = false
         awaitingHomeCompletion = false
+        homeCycleObserved = false
         guard isConnected else {
             lastError = "Connect first"
             return
@@ -419,6 +433,8 @@ final class AppModel: ObservableObject {
                         try coordinator.disableSoftLimitsForRecovery()
                         try coordinator.unlock()
                         await MainActor.run {
+                            self.machine.softLimitsEnabled = false
+                            self.persistMachine()
                             self.console.append("--- Soft limits ($20) off, unlock retried ---")
                         }
                     } catch {
@@ -464,6 +480,7 @@ final class AppModel: ObservableObject {
         // Position may be wrong after a mid-motion reset — block Start until re-homed.
         xyHomedThisSession = false
         awaitingHomeCompletion = false
+        homeCycleObserved = false
         guard isConnected else {
             lastError = "Connect first"
             noticeTitle = "Emergency stop"
@@ -478,6 +495,7 @@ final class AppModel: ObservableObject {
                 await MainActor.run {
                     self.xyHomedThisSession = false
                     self.awaitingHomeCompletion = false
+                    self.homeCycleObserved = false
                     self.motionWarning = "Motion halted. Unlock if Locked, then Home X/Y before Start — do not plot on an untrusted origin."
                     self.console.append("--- Emergency stop (feed hold + soft reset) — re-home required ---")
                     self.lastError = nil
@@ -666,12 +684,14 @@ final class AppModel: ObservableObject {
         }
         do {
             xyHomedThisSession = false
+            homeCycleObserved = false
             awaitingHomeCompletion = true
             try coordinator.homeXY(machine: machine)
             console.append("--- Homing X/Y only (pen raised; Z is not homed) — wait until motion stops ---")
             calibrationNote = "Homing X/Y. Wait until Idle at the switches — Start stays blocked until then."
         } catch {
             awaitingHomeCompletion = false
+            homeCycleObserved = false
             xyHomedThisSession = false
             lastError = error.localizedDescription
                 + " If homing is disabled on the controller, enable it ($22=1) or home manually with jog."
@@ -739,10 +759,9 @@ final class AppModel: ObservableObject {
             try coordinator.applyTravelLimits(x: travelX, y: travelY)
             machine.travelX = travelX
             machine.travelY = travelY
-            if enableSoftLimits {
-                try coordinator.setSetting("$20", value: 1)
-                machine.softLimitsEnabled = true
-            }
+            // Always write $20 explicitly so the profile cannot drift from the controller.
+            try coordinator.setSetting("$20", value: enableSoftLimits ? 1 : 0)
+            machine.softLimitsEnabled = enableSoftLimits
             if enableHardLimits {
                 try coordinator.setSetting("$21", value: 1)
                 machine.hardLimitsEnabled = true
@@ -2129,6 +2148,7 @@ final class AppModel: ObservableObject {
             isHomed: xyHomedThisSession,
             machinePosition: status.mpos,
             workPosition: status.wpos,
+            status: status,
             requireSoftLimits: true
         )
     }

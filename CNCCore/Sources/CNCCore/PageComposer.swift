@@ -351,9 +351,14 @@ public enum PageComposer {
                 }
                 lines.append("; PEN CHANGE: \(label)")
                 lines.append("M0")
-                layerIdx = min(layerIdx + 1, max(layers.count - 1, 0))
-                if layerIdx < layers.count {
-                    activePen = layers[layerIdx].pen
+                // Pause before/after stays on the current layer. Only inter-layer
+                // markers (pen name from mergeLayerJobs) advance activePen.
+                let isPause = label.lowercased().hasPrefix("pause ")
+                if !isPause {
+                    layerIdx = min(layerIdx + 1, max(layers.count - 1, 0))
+                    if layerIdx < layers.count {
+                        activePen = layers[layerIdx].pen
+                    }
                 }
             case .move(let p):
                 if penDown {

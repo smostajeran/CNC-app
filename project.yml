@@ -36,7 +36,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.cncapp.Quill
         PRODUCT_NAME: Quill
         MARKETING_VERSION: "1.3"
-        CURRENT_PROJECT_VERSION: "11"
+        CURRENT_PROJECT_VERSION: "12"
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Quill/Quill.entitlements
@@ -46,24 +46,6 @@ targets:
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGNING_REQUIRED: NO
     preBuildScripts:
-      - name: Fix noticeTitle nil clears
-        basedOnDependencyAnalysis: false
-        script: |
-          set -euo pipefail
-          FILE="${SRCROOT}/Quill/AppModel.swift"
-          python3 - "$FILE" <<'PY'
-          from pathlib import Path
-          import re, sys
-          p = Path(sys.argv[1])
-          t = p.read_text(encoding="utf-8")
-          t2, n = re.subn(r"noticeTitle\s*=\s*nil\b", 'noticeTitle = ""', t)
-          if n:
-              p.write_text(t2, encoding="utf-8")
-              print(f"preBuild: patched {n} noticeTitle = nil → \"\"")
-          left = t2 if n else t
-          if re.search(r"noticeTitle\s*=\s*nil\b", left):
-              raise SystemExit("preBuild: noticeTitle = nil still present in AppModel.swift")
-          PY
       - name: Stamp git commit into BuildInfo
         basedOnDependencyAnalysis: false
         script: |

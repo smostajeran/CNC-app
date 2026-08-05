@@ -151,37 +151,40 @@ final class PageComposerTests: XCTestCase {
 
         let optimized = PathOptimizer.optimize(job, mode: .serpentineRows)
         let paths = PathOptimizer.extractDrawPaths(from: optimized)
-        let midY = (paths.map { $0.points.map(\.y).reduce(0, +) / Double($0.points.count) }
-            .min()! + paths.map { $0.points.map(\.y).reduce(0, +) / Double($0.points.count) }
-            .max()!) / 2
-        let top = paths.filter {
-            $0.points.map(\.y).reduce(0, +) / Double($0.points.count) >= midY
+        func centroidY(_ path: PathSegment) -> Double {
+            let ys = path.points.map(\.y)
+            return ys.reduce(0, +) / Double(ys.count)
         }
-        let bottom = paths.filter {
-            $0.points.map(\.y).reduce(0, +) / Double($0.points.count) < midY
+        func maxX(_ path: PathSegment) -> Double {
+            path.points.map(\.x).max() ?? 0
         }
-        // Top line plotted first (LTR): its paths appear before bottom in optimized order.
-        let firstTopIdx = paths.firstIndex { path in
-            path.points.map(\.y).reduce(0, +) / Double(path.points.count) >= midY
+        func centroidX(_ path: PathSegment) -> Double {
+            let xs = path.points.map(\.x)
+            return xs.reduce(0, +) / Double(xs.count)
         }
-        let firstBotIdx = paths.firstIndex { path in
-            path.points.map(\.y).reduce(0, +) / Double(path.points.count) < midY
-        }
+
+        let ys = paths.map(centroidY)
+        let midY = ((ys.min() ?? 0) + (ys.max() ?? 0)) / 2
+        let top = paths.filter { centroidY($0) >= midY }
+        let bottom = paths.filter { centroidY($0) < midY }
+
+        let firstTopIdx = paths.firstIndex { centroidY($0) >= midY }
+        let firstBotIdx = paths.firstIndex { centroidY($0) < midY }
         XCTAssertNotNil(firstTopIdx)
         XCTAssertNotNil(firstBotIdx)
-        XCTAssertLessThan(firstTopIdx!, firstBotIdx!)
+        if let firstTopIdx, let firstBotIdx {
+            XCTAssertLessThan(firstTopIdx, firstBotIdx)
+        }
 
         // Bottom (odd) row is RTL: first bottom stroke is on the right side of that line.
-        let bottomInOrder = paths.filter {
-            $0.points.map(\.y).reduce(0, +) / Double($0.points.count) < midY
-        }
+        let bottomInOrder = paths.filter { centroidY($0) < midY }
         XCTAssertFalse(bottomInOrder.isEmpty)
-        let bottomRight = bottom.map { $0.points.map(\.x).max()! }.max()!
-        XCTAssertEqual(bottomInOrder.first!.points.map(\.x).max()!, bottomRight, accuracy: 0.05)
+        let bottomRight = bottom.map(maxX).max() ?? 0
+        XCTAssertEqual(maxX(bottomInOrder[0]), bottomRight, accuracy: 0.05)
 
         // Centroids on each line still increase left→right when sorted (no X-mirror).
         for band in [top, bottom] {
-            let cens = band.map { $0.points.map(\.x).reduce(0, +) / Double($0.points.count) }.sorted()
+            let cens = band.map(centroidX).sorted()
             XCTAssertEqual(cens.count, band.count)
             for i in 1..<cens.count {
                 XCTAssertGreaterThanOrEqual(cens[i], cens[i - 1] - 0.01)
@@ -240,6 +243,24 @@ final class PageComposerTests: XCTestCase {
         let composed = try PageComposer.compose(page, profile: .ta4, optimize: true)
         XCTAssertTrue(composed.gcode.contains("M0"))
         XCTAssertEqual(composed.optimizedMetrics.penChanges, 1)
+    }
+
+    func testOptimizePreservesInLayerPauseBeforeAfter() {
+        let job = PlotJob(commands: [
+            .penChange("Pause before Black"),
+            .move(PlotPoint(x: 0, y: 0)),
+            .line(PlotPoint(x: 10, y: 0)),
+            .move(PlotPoint(x: 100, y: 0)),
+            .line(PlotPoint(x: 110, y: 0)),
+            .penChange("Pause after Black"),
+        ])
+        let optimized = PathOptimizer.optimize(job, mode: .serpentineRows)
+        let labels = optimized.commands.compactMap { cmd -> String? in
+            if case .penChange(let label) = cmd { return label }
+            return nil
+        }
+        XCTAssertEqual(labels, ["Pause before Black", "Pause after Black"])
+        XCTAssertEqual(PathOptimizer.extractDrawPaths(from: optimized).count, 2)
     }
 
     func testCSVVariableData() throws {
