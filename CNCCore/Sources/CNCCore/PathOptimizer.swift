@@ -55,7 +55,15 @@ public struct PathSegment: Equatable, Sendable {
     }
 }
 
-/// Reorder / reverse path groups to cut pen-up travel.
+public enum PathOptimizeMode: Equatable, Sendable {
+    /// Nearest-neighbor; may reverse individual strokes (fine for SVG, unsafe for naïve text).
+    case nearestNeighbor(allowReverse: Bool)
+    /// Group strokes into horizontal rows and alternate LTR / RTL (serpentine).
+    /// RTL rows reverse both visit order and each stroke so ink stays upright and readable.
+    case serpentineRows
+}
+
+/// Reorder path groups to cut pen-up travel.
 public enum PathOptimizer {
     public static func extractDrawPaths(from job: PlotJob) -> [PathSegment] {
         var paths: [PathSegment] = []
@@ -86,8 +94,22 @@ public enum PathOptimizer {
         return paths
     }
 
-    /// Nearest-neighbor with optional reverse. Keeps pen-change barriers intact when passed as separate jobs.
+    /// Default for Quill writing: serpentine rows so alternate lines are not mirrored.
     public static func optimize(_ job: PlotJob) -> PlotJob {
+        optimize(job, mode: .serpentineRows)
+    }
+
+    public static func optimize(_ job: PlotJob, mode: PathOptimizeMode) -> PlotJob {
+        switch mode {
+        case .nearestNeighbor(let allowReverse):
+            return nearestNeighbor(job, allowReverse: allowReverse)
+        case .serpentineRows:
+            return serpentineRows(job)
+        }
+    }
+
+    /// Nearest-neighbor with optional reverse. Keeps pen-change barriers intact when passed as separate jobs.
+    private static func nearestNeighbor(_ job: PlotJob, allowReverse: Bool) -> PlotJob {
         let paths = extractDrawPaths(from: job)
         guard paths.count > 1 else { return job }
 
@@ -104,16 +126,18 @@ public enum PathOptimizer {
             for (i, cand) in remaining.enumerated() {
                 guard let s = cand.start, let e = cand.end else { continue }
                 let dForward = hypot(s.x - from.x, s.y - from.y)
-                let dReverse = hypot(e.x - from.x, e.y - from.y)
                 if dForward < bestDist {
                     bestDist = dForward
                     bestIdx = i
                     bestReversed = false
                 }
-                if dReverse < bestDist {
-                    bestDist = dReverse
-                    bestIdx = i
-                    bestReversed = true
+                if allowReverse {
+                    let dReverse = hypot(e.x - from.x, e.y - from.y)
+                    if dReverse < bestDist {
+                        bestDist = dReverse
+                        bestIdx = i
+                        bestReversed = true
+                    }
                 }
             }
             var next = remaining.remove(at: bestIdx)
@@ -122,6 +146,69 @@ public enum PathOptimizer {
             cursor = next
         }
 
+        return jobFromPaths(ordered)
+    }
+
+    /// Plot row-by-row (by Y), alternating direction like a typewriter / plough.
+    ///
+    /// - Even rows: left → right, strokes in original orientation.
+    /// - Odd rows: right → left, each stroke reversed so coordinates still draw upright letters.
+    ///
+    /// This prevents the classic failure mode where the gantry travels RTL but the path data
+    /// is still LTR, which makes every other line look mirrored.
+    private static func serpentineRows(_ job: PlotJob, rowToleranceMm: Double = 4.0) -> PlotJob {
+        let paths = extractDrawPaths(from: job)
+        guard paths.count > 1 else { return job }
+
+        struct Item {
+            var path: PathSegment
+            var y: Double
+            var xMin: Double
+            var xMax: Double
+        }
+
+        var items: [Item] = paths.compactMap { path in
+            guard !path.points.isEmpty else { return nil }
+            let ys = path.points.map(\.y)
+            let xs = path.points.map(\.x)
+            let y = ys.reduce(0, +) / Double(ys.count)
+            return Item(path: path, y: y, xMin: xs.min()!, xMax: xs.max()!)
+        }
+        guard items.count > 1 else { return job }
+
+        // Top of page first (larger Y in machine space with Y-up).
+        items.sort { $0.y > $1.y }
+
+        var rows: [[Item]] = []
+        for item in items {
+            if var last = rows.last, let refY = last.first?.y, abs(item.y - refY) <= rowToleranceMm {
+                last.append(item)
+                rows[rows.count - 1] = last
+            } else {
+                rows.append([item])
+            }
+        }
+
+        var ordered: [PathSegment] = []
+        ordered.reserveCapacity(items.count)
+        for (rowIndex, row) in rows.enumerated() {
+            let rightToLeft = rowIndex % 2 == 1
+            if rightToLeft {
+                // Visit rightmost stroke first; reverse each stroke so pen enters from the right
+                // while the ink geometry of each letter stays correct (not mirrored).
+                for item in row.sorted(by: { $0.xMax > $1.xMax }) {
+                    ordered.append(item.path.reversed())
+                }
+            } else {
+                for item in row.sorted(by: { $0.xMin < $1.xMin }) {
+                    ordered.append(item.path)
+                }
+            }
+        }
+        return jobFromPaths(ordered)
+    }
+
+    private static func jobFromPaths(_ ordered: [PathSegment]) -> PlotJob {
         var commands: [PlotCommand] = []
         for path in ordered {
             guard let first = path.points.first else { continue }

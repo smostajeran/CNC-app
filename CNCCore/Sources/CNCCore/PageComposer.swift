@@ -149,9 +149,6 @@ public enum PageComposer {
                 commands.append(.penChange("Pause after \(layer.name)"))
             }
             var job = PlotJob(commands: commands)
-            if optimize {
-                job = PathOptimizer.optimize(job)
-            }
             if layer.pen.passes > 1 {
                 job = repeatPasses(job, count: layer.pen.passes)
             }
@@ -160,18 +157,18 @@ public enum PageComposer {
 
         guard !layerJobs.isEmpty else { throw PageComposerError.emptyPage }
 
-        var merged: [PlotCommand] = []
-        for (idx, pair) in layerJobs.enumerated() {
-            if idx > 0 {
-                merged.append(.penChange(pair.0.pen.name))
-            }
-            merged.append(contentsOf: pair.1.commands)
+        // Optimize each layer on its own so pen-change barriers stay intact, then merge.
+        // Do not re-optimize the merged job — that would drop M0 pen-change markers and
+        // reshuffle strokes across pens.
+        let optimizedLayerJobs: [(PageLayer, PlotJob)] = layerJobs.map { layer, job in
+            (layer, PathOptimizer.optimize(job, mode: .serpentineRows))
         }
-        let job = PlotJob(commands: merged)
+
+        let job = mergeLayerJobs(layerJobs)
+        let optimizedJob = mergeLayerJobs(optimizedLayerJobs)
         let baseGCode = renderGCode(from: job, layers: layerJobs.map(\.0), profile: profile)
         let drawFeed = layerJobs.map(\.0.pen.drawFeed).min() ?? profile.drawFeed
         let metrics = PathOptimizer.metrics(for: job, drawFeed: drawFeed, travelFeed: profile.jogFeed)
-        let optimizedJob = PathOptimizer.optimize(job)
         let optimizedMetrics = PathOptimizer.metrics(
             for: optimizedJob,
             drawFeed: drawFeed,
@@ -190,6 +187,17 @@ public enum PageComposer {
             warnings: warnings,
             hasBlockingOverflow: blockingOverflow
         )
+    }
+
+    private static func mergeLayerJobs(_ layerJobs: [(PageLayer, PlotJob)]) -> PlotJob {
+        var merged: [PlotCommand] = []
+        for (idx, pair) in layerJobs.enumerated() {
+            if idx > 0 {
+                merged.append(.penChange(pair.0.pen.name))
+            }
+            merged.append(contentsOf: pair.1.commands)
+        }
+        return PlotJob(commands: merged)
     }
 
     public static func plotJob(for element: PageElement, profile: MachineProfile) throws -> PlotJob {

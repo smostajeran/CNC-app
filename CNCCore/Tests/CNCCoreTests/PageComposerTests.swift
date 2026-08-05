@@ -63,6 +63,84 @@ final class PageComposerTests: XCTestCase {
         XCTAssertLessThanOrEqual(after.travelDistanceMm, before.travelDistanceMm + 0.01)
     }
 
+    /// Serpentine: even rows LTR, odd rows RTL with each stroke reversed (not mirrored in X).
+    func testSerpentineRowsAlternateDirectionWithoutMirroring() {
+        // Top row (Y=20): three short strokes left→right in source order scrambled.
+        // Bottom row (Y=5): three short strokes; must be visited right→left after optimize.
+        let job = PlotJob(commands: [
+            .move(PlotPoint(x: 20, y: 20)), .line(PlotPoint(x: 28, y: 20)), // C top
+            .move(PlotPoint(x: 0, y: 20)), .line(PlotPoint(x: 8, y: 20)),   // A top
+            .move(PlotPoint(x: 10, y: 20)), .line(PlotPoint(x: 18, y: 20)), // B top
+            .move(PlotPoint(x: 0, y: 5)), .line(PlotPoint(x: 8, y: 5)),     // D bottom
+            .move(PlotPoint(x: 20, y: 5)), .line(PlotPoint(x: 28, y: 5)),   // F bottom
+            .move(PlotPoint(x: 10, y: 5)), .line(PlotPoint(x: 18, y: 5)),   // E bottom
+        ])
+
+        let optimized = PathOptimizer.optimize(job, mode: .serpentineRows)
+        let paths = PathOptimizer.extractDrawPaths(from: optimized)
+        XCTAssertEqual(paths.count, 6)
+
+        // Top row LTR: A, B, C — original orientation (start.x < end.x).
+        XCTAssertEqual(paths[0].start?.x ?? -1, 0, accuracy: 0.01)
+        XCTAssertEqual(paths[1].start?.x ?? -1, 10, accuracy: 0.01)
+        XCTAssertEqual(paths[2].start?.x ?? -1, 20, accuracy: 0.01)
+        XCTAssertLessThan(paths[0].start!.x, paths[0].end!.x)
+
+        // Bottom row RTL: F, E, D — each stroke reversed so start is former right end.
+        XCTAssertEqual(paths[3].start?.x ?? -1, 28, accuracy: 0.01)
+        XCTAssertEqual(paths[4].start?.x ?? -1, 18, accuracy: 0.01)
+        XCTAssertEqual(paths[5].start?.x ?? -1, 8, accuracy: 0.01)
+        XCTAssertGreaterThan(paths[3].start!.x, paths[3].end!.x)
+
+        // Geometry extents preserved (polyline reverse ≠ X-mirror).
+        let bottomExtents = paths[3...5].map { path -> (Double, Double) in
+            let xs = path.points.map(\.x)
+            return (xs.min()!, xs.max()!)
+        }
+        XCTAssertEqual(bottomExtents[0].0, 20, accuracy: 0.01)
+        XCTAssertEqual(bottomExtents[0].1, 28, accuracy: 0.01)
+        XCTAssertEqual(bottomExtents[1].0, 10, accuracy: 0.01)
+        XCTAssertEqual(bottomExtents[2].0, 0, accuracy: 0.01)
+    }
+
+    func testSerpentineKeepsMultiLineTextExtentsReadable() throws {
+        var page = PageDocument(format: .a5Landscape, bedOriginX: 30, bedOriginY: 20)
+        page.elements = [
+            PageElement(
+                name: "Thanks",
+                kind: .text("THANK YOU\nTHANK YOU", heightMm: 10),
+                xMm: 15,
+                yMm: 30,
+                layerID: page.defaultLayerID
+            ),
+        ]
+        let plain = try PageComposer.compose(page, profile: .ta4, optimize: false)
+        let serpentine = try PageComposer.compose(page, profile: .ta4, optimize: true)
+
+        // Same ink footprint — optimizer must not mirror alternate lines in X.
+        XCTAssertEqual(plain.job.bounds.minX, serpentine.job.bounds.minX, accuracy: 0.05)
+        XCTAssertEqual(plain.job.bounds.maxX, serpentine.job.bounds.maxX, accuracy: 0.05)
+        XCTAssertEqual(plain.job.bounds.minY, serpentine.job.bounds.minY, accuracy: 0.05)
+        XCTAssertEqual(plain.job.bounds.maxY, serpentine.job.bounds.maxY, accuracy: 0.05)
+        XCTAssertEqual(
+            PathOptimizer.extractDrawPaths(from: plain.job).count,
+            PathOptimizer.extractDrawPaths(from: serpentine.job).count
+        )
+    }
+
+    func testOptimizePreservesPenChangeMarkers() throws {
+        var page = PageDocument(format: .placeCard, bedOriginX: 40, bedOriginY: 40)
+        let pen1 = page.defaultLayerID
+        let pen2 = page.addLayer(named: "Red", pen: .marker)
+        page.elements = [
+            PageElement(name: "A", kind: .text("A", heightMm: 8), xMm: 5, yMm: 10, layerID: pen1),
+            PageElement(name: "B", kind: .text("B", heightMm: 8), xMm: 30, yMm: 10, layerID: pen2),
+        ]
+        let composed = try PageComposer.compose(page, profile: .ta4, optimize: true)
+        XCTAssertTrue(composed.gcode.contains("M0"))
+        XCTAssertEqual(composed.optimizedMetrics.penChanges, 1)
+    }
+
     func testCSVVariableData() throws {
         let csv = """
         name,table

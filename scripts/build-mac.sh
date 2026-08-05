@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 SHA="$(git rev-parse --short HEAD)"
-echo "==> Building Quill tip $SHA (marketing 1.3 / build 6)"
+echo "==> Building Quill tip $SHA (marketing 1.3 / build 7)"
 
 echo "==> Stamp git commit into BuildInfo.swift"
 "$ROOT/scripts/stamp-build-info.sh"
@@ -36,7 +36,7 @@ xcodebuild \
   -configuration Debug \
   -derivedDataPath "$ROOT/build/DerivedData" \
   MARKETING_VERSION=1.3 \
-  CURRENT_PROJECT_VERSION=6 \
+  CURRENT_PROJECT_VERSION=7 \
   CODE_SIGN_IDENTITY="-" \
   CODE_SIGNING_REQUIRED=NO \
   CODE_SIGNING_ALLOWED=YES \
@@ -70,8 +70,8 @@ GIT="$(/usr/libexec/PlistBuddy -c 'Print :QuillGitCommit' "$PLIST" 2>/dev/null |
 echo ""
 echo "Built: $APP"
 echo "Version: $SHORT ($BUILD) · $GIT"
-if [[ "$SHORT" != "1.3" || "$BUILD" != "6" ]]; then
-  echo "ERROR: expected marketing 1.3 / build 6, got $SHORT ($BUILD)" >&2
+if [[ "$SHORT" != "1.3" || "$BUILD" != "7" ]]; then
+  echo "ERROR: expected marketing 1.3 / build 7, got $SHORT ($BUILD)" >&2
   exit 1
 fi
 if [[ "$GIT" != "$SHA" ]]; then
