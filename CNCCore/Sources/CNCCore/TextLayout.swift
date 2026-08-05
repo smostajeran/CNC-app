@@ -337,7 +337,7 @@ public enum TextLayoutEngine {
         var cursorTop = 0.0
         var finalLines: [TextLineLayout] = []
         var lineIndex = 0
-        for (textLine, widthOrSpacer) in lines {
+        for (_, widthOrSpacer) in lines {
             if widthOrSpacer < 0 {
                 cursorTop += -widthOrSpacer
                 continue
