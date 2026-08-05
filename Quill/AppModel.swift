@@ -179,7 +179,7 @@ final class AppModel: ObservableObject {
                     // Soft-reset briefly reports Alarm during Unlock — don't overwrite that progress.
                     if !self.isUnlocking {
                         self.noticeTitle = "Machine locked"
-                        self.motionWarning = "Controller is in Alarm — tap Unlock in the header."
+                        self.motionWarning = "Controller is in Alarm — tap Unlock ($X). After Emergency Stop (ALARM:3), do not Soft reset again first."
                     }
                 } else if self.noticeTitle == "Machine locked" {
                     self.noticeTitle = nil
