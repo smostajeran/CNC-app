@@ -179,11 +179,12 @@ struct ContentView: View {
                     }
                 }
             }
-            if alarm {
-                Button("Unlock") { model.unlock() }
+            if alarm || model.isUnlocking {
+                Button(model.isUnlocking ? "Unlocking…" : "Unlock") { model.unlock() }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.danger)
                     .controlSize(.small)
+                    .disabled(model.isUnlocking)
                     .help("Clear the Alarm lock so the machine can move again")
             }
         }

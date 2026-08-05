@@ -155,9 +155,27 @@ struct PageComposerView: View {
                     Button("Add Paragraph") { model.addTextElement() }
                         .buttonStyle(.borderedProminent)
                 }
+                if model.hasPendingInkForCompose && !model.page.elements.contains(where: {
+                    if case .ink = $0.kind { return true }
+                    return false
+                }) {
+                    HelpCard(
+                        title: "Handwriting ready",
+                        message: "Strokes from Draw are not on this page yet. Tap Add Ink to place them — the canvas preview alone is not enough to plot.",
+                        tone: .info,
+                        actionTitle: "Add Ink",
+                        onAction: { model.addInkToPage() }
+                    )
+                }
+
                 HStack {
                     Button("Add SVG…") { openSVG() }
-                    Button("Add Ink") { model.addInkToPage() }
+                    if model.hasPendingInkForCompose {
+                        Button("Add Ink") { model.addInkToPage() }
+                            .buttonStyle(.borderedProminent)
+                    } else {
+                        Button("Add Ink") { model.addInkToPage() }
+                    }
                     Menu("Shape") {
                         Button("Rectangle") { model.addShape(.rect) }
                         Button("Rounded rect") { model.addShape(.roundedRect) }
@@ -401,7 +419,8 @@ struct PageComposerView: View {
         }
         guideOverlay(page: page, px: px, py: py, scale: scale)
         elementSelectionFrames(page: page, ox: ox, oy: oy, scale: scale, bedH: bedH)
-        if let job = model.previewJob {
+        // Only show composed page paths — never leftover Draw-mode ink preview.
+        if model.composedPage != nil, let job = model.previewJob {
             plotPreviewPaths(job: job, ox: ox, oy: oy, scale: scale, bedH: bedH)
         }
     }

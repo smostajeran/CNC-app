@@ -88,13 +88,18 @@ public final class GRBLClient: @unchecked Sendable {
 
     /// Clear Alarm. Soft-resets first so a stuck planner/buffer (after E-Stop or a hung probe)
     /// cannot block the `$X` line, then unlocks and requests status.
+    /// Polling is paused so drain/`ok` collection cannot race the status timer.
     public func unlock() throws {
+        stopPolling()
+        defer { startPolling() }
         try softReset()
-        Thread.sleep(forTimeInterval: 0.3)
-        _ = try drain(timeout: 0.25)
+        Thread.sleep(forTimeInterval: 0.35)
+        _ = try drain(timeout: 0.3)
         try sendLine("$X")
-        Thread.sleep(forTimeInterval: 0.05)
+        _ = try collectUntilOk(timeout: 2.0)
         try requestStatus()
+        Thread.sleep(forTimeInterval: 0.08)
+        _ = try drain(timeout: 0.2)
     }
 
     /// Home X and Y against the machine end switches (GRBL `$H`).

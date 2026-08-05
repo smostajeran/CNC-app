@@ -173,6 +173,12 @@ public final class CommandCoordinator: @unchecked Sendable {
         try client.setSetting(key, value: value)
     }
 
+    /// Recovery-only: turn soft limits off so Unlock is not immediately re-tripped.
+    public func disableSoftLimitsForRecovery() throws {
+        try requireConnected()
+        try client.setSetting("$20", value: 0)
+    }
+
     /// Always allowed when connected — recovery must not be blocked by busy state.
     public func softReset() throws {
         try requireConnected()

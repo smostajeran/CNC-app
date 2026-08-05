@@ -56,6 +56,8 @@ final class AppModel: ObservableObject {
     @Published var lastProbeBanner: String = ""
     /// Session flag: user confirmed regulated 12 V + controller POWER LED for calibration.
     @Published var motorsPowerConfirmed = false
+    /// True while Unlock recovery is in flight (soft-reset briefly reports Alarm — suppress nag).
+    @Published var isUnlocking = false
 
     @Published var mode: QuillMode = .setup
     @Published var showDiagnostics = false
@@ -169,11 +171,21 @@ final class AppModel: ObservableObject {
         }
         client.onStatus = { [weak self] status in
             Task { @MainActor in
-                self?.status = status
-                self?.runner.noteStatus(status)
-                if status.state.localizedCaseInsensitiveContains("alarm") {
-                    self?.noticeTitle = "Machine locked"
-                    self?.motionWarning = "Controller is in Alarm — tap Unlock in the header, then Soft reset in Advanced if needed."
+                guard let self else { return }
+                self.status = status
+                self.runner.noteStatus(status)
+                let alarm = status.state.localizedCaseInsensitiveContains("alarm")
+                if alarm {
+                    // Soft-reset briefly reports Alarm during Unlock — don't overwrite that progress.
+                    if !self.isUnlocking {
+                        self.noticeTitle = "Machine locked"
+                        self.motionWarning = "Controller is in Alarm — tap Unlock in the header."
+                    }
+                } else if self.noticeTitle == "Machine locked" {
+                    self.noticeTitle = nil
+                    if self.motionWarning?.localizedCaseInsensitiveContains("alarm") == true {
+                        self.motionWarning = nil
+                    }
                 }
             }
         }
@@ -309,36 +321,92 @@ final class AppModel: ObservableObject {
     }
 
     func softReset() {
-        do {
-            try coordinator.softReset()
-            console.append("--- Soft reset ---")
-            lastError = nil
-        } catch {
-            lastError = error.localizedDescription
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        let coordinator = self.coordinator
+        console.append("--- Soft reset… ---")
+        Task.detached(priority: .userInitiated) {
+            do {
+                try coordinator.softReset()
+                await MainActor.run {
+                    self.console.append("--- Soft reset ---")
+                    self.lastError = nil
+                    self.requestStatus()
+                }
+            } catch {
+                await MainActor.run { self.lastError = error.localizedDescription }
+            }
         }
     }
 
-    /// Clear Locked/Alarm: soft-reset + `$X`. Always allowed while connected (not blocked by probe/job busy).
+    /// Clear Locked/Alarm: soft-reset + `$X`. Runs off the main thread so the UI stays responsive.
     func unlock() {
         lastError = nil
         penChangeMessage = nil
         runner.cancel()
-        do {
-            try coordinator.unlock()
-            console.append("--- Unlock: soft reset + $X ---")
-            motionWarning = nil
-            if noticeTitle == "Emergency stop" {
-                noticeTitle = nil
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
+        guard !isUnlocking else { return }
+        isUnlocking = true
+        let coordinator = self.coordinator
+        console.append("--- Unlocking (soft reset + $X)… ---")
+        motionWarning = "Unlocking…"
+        Task.detached(priority: .userInitiated) {
+            defer {
+                Task { @MainActor in self.isUnlocking = false }
             }
-            // Status arrives asynchronously; if Alarm persists, tell the user what to try next.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-                guard let self, self.isConnected, self.isAlarm else { return }
-                self.lastError = "Still locked after Unlock. Confirm 12 V power, open Advanced → Soft reset, then Unlock again. If soft limits ($20) are on, set $20=0 until the machine is homed."
-                self.motionWarning = self.lastError
+            do {
+                try coordinator.unlock()
+                await MainActor.run {
+                    self.console.append("--- Unlock: soft reset + $X ---")
+                    self.motionWarning = nil
+                    if self.noticeTitle == "Emergency stop" || self.noticeTitle == "Machine locked" {
+                        self.noticeTitle = nil
+                    }
+                    self.requestStatus()
+                }
+                // Give status polling a beat; if still Alarm, disable soft limits once and retry.
+                try await Task.sleep(nanoseconds: 500_000_000)
+                let stillAlarm = await MainActor.run { self.isConnected && self.isAlarm }
+                if stillAlarm {
+                    do {
+                        try coordinator.disableSoftLimitsForRecovery()
+                        try coordinator.unlock()
+                        await MainActor.run {
+                            self.console.append("--- Soft limits ($20) off, unlock retried ---")
+                        }
+                    } catch {
+                        await MainActor.run {
+                            self.lastError = error.localizedDescription
+                            self.motionWarning = error.localizedDescription
+                        }
+                        return
+                    }
+                    try await Task.sleep(nanoseconds: 400_000_000)
+                }
+                await MainActor.run {
+                    guard self.isConnected else { return }
+                    self.requestStatus()
+                    if self.isAlarm {
+                        let msg = "Still locked after Unlock. Confirm 12 V power, then Soft reset in Advanced and Unlock again."
+                        self.lastError = msg
+                        self.motionWarning = msg
+                    } else {
+                        self.motionWarning = nil
+                        if self.noticeTitle == "Machine locked" { self.noticeTitle = nil }
+                        self.console.append("--- Unlocked — Idle ---")
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.lastError = error.localizedDescription
+                    self.motionWarning = error.localizedDescription
+                }
             }
-        } catch {
-            lastError = error.localizedDescription
-            motionWarning = error.localizedDescription
         }
     }
 
@@ -346,17 +414,30 @@ final class AppModel: ObservableObject {
     func halt() {
         penChangeMessage = nil
         runner.cancel()
-        do {
-            try coordinator.halt()
+        guard isConnected else {
+            lastError = "Connect first"
             noticeTitle = "Emergency stop"
-            motionWarning = "Motion halted and the controller was reset. If the header shows Locked, tap Unlock before moving again."
-            console.append("--- Emergency stop (feed hold + soft reset) ---")
-            lastError = nil
-        } catch {
-            lastError = error.localizedDescription
-            noticeTitle = "Emergency stop"
-            motionWarning = error.localizedDescription
-            console.append("--- Emergency stop failed: \(error.localizedDescription) ---")
+            return
+        }
+        let coordinator = self.coordinator
+        noticeTitle = "Emergency stop"
+        motionWarning = "Stopping…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                try coordinator.halt()
+                await MainActor.run {
+                    self.motionWarning = "Motion halted and the controller was reset. If the header shows Locked, tap Unlock before moving again."
+                    self.console.append("--- Emergency stop (feed hold + soft reset) ---")
+                    self.lastError = nil
+                    self.requestStatus()
+                }
+            } catch {
+                await MainActor.run {
+                    self.lastError = error.localizedDescription
+                    self.motionWarning = error.localizedDescription
+                    self.console.append("--- Emergency stop failed: \(error.localizedDescription) ---")
+                }
+            }
         }
     }
     func feedHold() { try? coordinator.feedHold() }
@@ -980,6 +1061,17 @@ final class AppModel: ObservableObject {
 
     var canPreflightRun: Bool {
         composedPage != nil && !hasBlockingTextOverflow && pageFitsBed
+    }
+
+    /// True when Compose has at least one visible element on a visible layer.
+    var pageHasVisiblePlotContent: Bool {
+        let visibleLayers = Set(page.layers.filter(\.visible).map(\.id))
+        return page.elements.contains { $0.visible && visibleLayers.contains($0.layerID) }
+    }
+
+    /// Draw-canvas strokes not yet placed as a page element via Add Ink.
+    var hasPendingInkForCompose: Bool {
+        !inkDocument.strokes.isEmpty
     }
 
     func beginEditTransaction() {
@@ -1616,6 +1708,18 @@ final class AppModel: ObservableObject {
 
     func recomposePage() {
         page.applyTextBoxSizing()
+        // Empty Compose pages are normal — never raise a modal for that.
+        // Also drop stale Draw-mode preview paths so ink doesn't look "on the page".
+        guard pageHasVisiblePlotContent else {
+            composedPage = nil
+            if page.elements.isEmpty {
+                previewJob = nil
+            }
+            if lastError == PageComposerError.emptyPage.errorDescription {
+                lastError = nil
+            }
+            return
+        }
         do {
             var composePage = page
             if plotOnlySelectedLayer, let lid = selectedLayerID {
@@ -1640,12 +1744,23 @@ final class AppModel: ObservableObject {
             )
             if composed.hasBlockingOverflow {
                 lastError = composed.warnings.first ?? "Text overflow — resolve before plotting"
+            } else if lastError == PageComposerError.emptyPage.errorDescription {
+                lastError = nil
             }
+        } catch let error as PageComposerError where error == .emptyPage {
+            composedPage = nil
+            // Footer already prompts for content; no modal.
         } catch {
             composedPage = nil
-            // Keep last good preview; surface error.
             lastError = error.localizedDescription
         }
+    }
+
+    private var emptyComposeRunHelp: String {
+        if hasPendingInkForCompose {
+            return "Handwriting is still only in Draw. Tap Add Ink to place it on the page, then Preflight & Run."
+        }
+        return "Add text, SVG, ink, or a shape to the page before running."
     }
 
     func applyPageToJob() {
@@ -1654,7 +1769,10 @@ final class AppModel: ObservableObject {
             return
         }
         recomposePage()
-        guard let composed = composedPage else { return }
+        guard let composed = composedPage else {
+            lastError = emptyComposeRunHelp
+            return
+        }
         // Text overflow is never bypassed by allowStartDespiteWarnings.
         if composed.hasBlockingOverflow || page.hasTextOverflow() {
             lastError = "Resolve text overflow before plotting. This cannot be bypassed."
@@ -1665,7 +1783,10 @@ final class AppModel: ObservableObject {
 
     func framePage() {
         recomposePage()
-        guard let composed = composedPage else { return }
+        guard let composed = composedPage else {
+            lastError = emptyComposeRunHelp
+            return
+        }
         loadJob(text: composed.frameGCode, name: "Frame-\(page.format.id).gcode", isSVG: false)
         mode = .run
     }
