@@ -130,24 +130,32 @@ struct CalibrationWizardView: View {
     }
 
     private var footer: some View {
-        HStack {
-            Button("Back") { goBack() }
-                .disabled(step == .power)
-            Spacer()
-            if step == .save {
-                Button("Finish") {
-                    model.finishCommissioningProfile()
-                    model.setCalibrationWizardOpen(false)
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.steel)
-                .disabled(!oversizeRejected || !boundaryReady)
-            } else {
-                Button("Continue") { goNext() }
+        VStack(alignment: .trailing, spacing: 8) {
+            if !canContinue, let hint = continueBlockedHint {
+                Text(hint)
+                    .font(Theme.captionFont)
+                    .foregroundStyle(Theme.caution)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            HStack {
+                Button("Back") { goBack() }
+                    .disabled(step == .power)
+                Spacer()
+                if step == .save {
+                    Button("Finish") {
+                        model.finishCommissioningProfile()
+                        model.setCalibrationWizardOpen(false)
+                        dismiss()
+                    }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.steel)
-                    .disabled(!canContinue)
+                    .disabled(!oversizeRejected || !boundaryReady)
+                } else {
+                    Button("Continue") { goNext() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.steel)
+                        .disabled(!canContinue)
+                }
             }
         }
         .padding(16)
@@ -239,43 +247,94 @@ struct CalibrationWizardView: View {
         VStack(alignment: .leading, spacing: 14) {
             stepTitle(
                 "Direction test",
-                "Park the carriage near the middle. Keep the pen raised. Jog 5 mm on each axis and confirm direction before continuing."
+                "Park the carriage near the middle. Keep the pen raised. For each axis: jog 5 mm, then tap Moved correctly — or Flip if it went the wrong way, jog again, and confirm."
             )
             motionGateBanner
-            HStack(spacing: 12) {
-                Button("Pen up") { model.penUp() }
-                    .disabled(!model.canCalibrateMotion)
-                Button("Jog X +5 mm") {
-                    model.jogStep = 5
-                    model.jog(dx: 5, dy: 0)
-                }
-                .disabled(!model.canCalibrateMotion)
-                Button("X moved correctly") { xDirectionOK = true }
-                    .disabled(!model.canCalibrateMotion)
-                Button("X is reversed — flip") {
-                    model.flipAxisInvert(.x)
-                    xDirectionOK = false
-                }
-                .disabled(!model.canCalibrateMotion)
+
+            // Checklist — Continue stays off until both are confirmed.
+            HStack(spacing: 16) {
+                directionChecklistRow(axis: "X", ok: xDirectionOK)
+                directionChecklistRow(axis: "Y", ok: yDirectionOK)
             }
-            HStack(spacing: 12) {
-                Button("Jog Y +5 mm") {
-                    model.jogStep = 5
-                    model.jog(dx: 0, dy: 5)
-                }
-                .disabled(!model.canCalibrateMotion)
-                Button("Y moved correctly") { yDirectionOK = true }
-                    .disabled(!model.canCalibrateMotion)
-                Button("Y is reversed — flip") {
-                    model.flipAxisInvert(.y)
-                    yDirectionOK = false
-                }
-                .disabled(!model.canCalibrateMotion)
+
+            if !xDirectionOK || !yDirectionOK {
+                HelpCard(
+                    title: "Confirm each axis to continue",
+                    message: !xDirectionOK && !yDirectionOK
+                        ? "Jog X, then tap “X moved correctly”. Repeat for Y. Flipping an axis clears its check — jog once more and confirm again."
+                        : (!xDirectionOK
+                           ? "X still needs confirmation: jog X +5 mm, then tap “X moved correctly”."
+                           : "Y still needs confirmation: jog Y +5 mm, then tap “Y moved correctly”."),
+                    tone: .caution
+                )
             }
-            Text("Invert mask $3 = \(model.machine.directionInvertMask) · X \(model.machine.invertX ? "flipped" : "normal") · Y \(model.machine.invertY ? "flipped" : "normal")")
-                .font(Theme.captionFont)
-                .foregroundStyle(Theme.inkMuted)
+
+            Group {
+                Text("X axis")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                HStack(spacing: 10) {
+                    Button("Pen up") { model.penUp() }
+                        .disabled(!model.canCalibrateMotion)
+                    Button("Jog X +5 mm") {
+                        model.jogStep = 5
+                        model.jog(dx: 5, dy: 0)
+                    }
+                    .disabled(!model.canCalibrateMotion)
+                    Button("X moved correctly") { xDirectionOK = true }
+                        .buttonStyle(.borderedProminent)
+                        .tint(xDirectionOK ? Theme.ok : Theme.steel)
+                        .disabled(!model.isConnected)
+                    Button("X reversed — flip") {
+                        model.flipAxisInvert(.x)
+                        xDirectionOK = false
+                    }
+                    .disabled(!model.canCalibrateMotion)
+                }
+            }
+
+            Group {
+                Text("Y axis")
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                HStack(spacing: 10) {
+                    Button("Jog Y +5 mm") {
+                        model.jogStep = 5
+                        model.jog(dx: 0, dy: 5)
+                    }
+                    .disabled(!model.canCalibrateMotion)
+                    Button("Y moved correctly") { yDirectionOK = true }
+                        .buttonStyle(.borderedProminent)
+                        .tint(yDirectionOK ? Theme.ok : Theme.steel)
+                        .disabled(!model.isConnected)
+                    Button("Y reversed — flip") {
+                        model.flipAxisInvert(.y)
+                        yDirectionOK = false
+                    }
+                    .disabled(!model.canCalibrateMotion)
+                }
+            }
+
+            Text(
+                "Controller $3 = \(model.machine.directionInvertMask)"
+                    + " · X \(model.machine.invertX ? "flipped" : "normal")"
+                    + " · Y \(model.machine.invertY ? "flipped" : "normal")"
+                    + (model.machine.invertZ ? " · Z flipped (pen lift)" : "")
+            )
+            .font(Theme.captionFont)
+            .foregroundStyle(Theme.inkMuted)
         }
+    }
+
+    private func directionChecklistRow(axis: String, ok: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(ok ? Theme.ok : Theme.inkMuted)
+            Text("\(axis) \(ok ? "confirmed" : "not confirmed")")
+                .font(Theme.captionFont.weight(.semibold))
+                .foregroundStyle(ok ? Theme.ok : Theme.inkMuted)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .quillGlass(tint: ok ? Theme.ok.opacity(0.18) : nil, shape: .capsule)
     }
 
     private var endStopsStep: some View {
@@ -679,7 +738,9 @@ struct CalibrationWizardView: View {
         case .head:
             return true
         case .direction:
-            return model.canCalibrateMotion && xDirectionOK && yDirectionOK
+            // Direction confirmations are explicit UI checks; don't strand the user if
+            // a transient Alarm clears canCalibrateMotion after a successful jog.
+            return model.isConnected && xDirectionOK && yDirectionOK
         case .endStops:
             return model.canCalibrateMotion && !endStopsIncomplete
         case .homing:
@@ -696,6 +757,31 @@ struct CalibrationWizardView: View {
             return boundaryReady && oversizeRejected
         case .save:
             return true
+        }
+    }
+
+    private var continueBlockedHint: String? {
+        switch step {
+        case .direction:
+            if !model.isConnected { return "Connect in Setup before continuing." }
+            if !xDirectionOK && !yDirectionOK {
+                return "Tap “X moved correctly” and “Y moved correctly” after each jog."
+            }
+            if !xDirectionOK { return "Confirm X: jog, then tap “X moved correctly”." }
+            if !yDirectionOK { return "Confirm Y: jog, then tap “Y moved correctly”." }
+            return nil
+        case .endStops:
+            return endStopsIncomplete ? "Press and release both end switches until both show Pass." : nil
+        case .homing:
+            return homingStarted ? nil : "Run Home X/Y, then check “Both axes homed correctly”."
+        case .limits:
+            return "Tap “Write travel + enable limits” before continuing."
+        case .accuracy:
+            return scaleApplied ? nil : "Apply X/Y steps or check “Scale checked”."
+        case .safety:
+            return "Run the boundary + oversize check until oversize is rejected."
+        default:
+            return nil
         }
     }
 
