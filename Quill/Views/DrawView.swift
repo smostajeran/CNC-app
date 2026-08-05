@@ -54,6 +54,7 @@ struct DrawView: View {
                             Button("Hold") { model.pauseJob() }
                             Button("Resume") { model.resumeJob() }
                             Button("Cancel") { model.cancelJob() }
+                            EmergencyStopButton(compact: true)
                             Spacer()
                             Text(streamLabel)
                                 .font(Theme.captionFont)

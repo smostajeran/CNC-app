@@ -54,9 +54,13 @@ struct ContentView: View {
 
                 if let warning = model.motionWarning {
                     HelpCard(
-                        title: "Check power",
+                        title: model.noticeTitle,
                         message: warning,
-                        tone: .caution,
+                        tone: model.noticeTitle == "Emergency stop" || model.noticeTitle == "Machine locked"
+                            ? .danger : .caution,
+                        actionTitle: (model.isAlarm || model.noticeTitle == "Emergency stop") ? "Unlock" : nil,
+                        onAction: (model.isAlarm || model.noticeTitle == "Emergency stop")
+                            ? { model.unlock() } : nil,
                         onDismiss: { model.motionWarning = nil }
                     )
                     .padding(.horizontal, 28)
@@ -110,9 +114,10 @@ struct ContentView: View {
                 Button("Refresh") { model.refreshPorts() }
                 Button("Status") { model.requestStatus() }
                     .disabled(!model.isConnected)
-                Button("Halt", role: .destructive) { model.halt() }
+                Button("Emergency Stop", role: .destructive) { model.halt() }
                     .disabled(!model.isConnected)
-                    .help("Emergency stop — cancel the job and halt motion")
+                    .keyboardShortcut(".", modifiers: .command)
+                    .help("Emergency stop — hold feed, cancel the job, and reset the controller (⌘.)")
             }
         }
         .onAppear { model.refreshPorts() }
@@ -142,7 +147,7 @@ struct ContentView: View {
     }
 
     private var brandHeader: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 16) {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(Theme.brandName)
                     .font(Theme.brandFont)
@@ -152,6 +157,7 @@ struct ContentView: View {
                     .foregroundStyle(Theme.inkMuted)
             }
             Spacer()
+            EmergencyStopButton(bindsShortcut: true)
             connectionChip
         }
     }

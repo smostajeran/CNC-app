@@ -90,6 +90,9 @@ struct MoveView: View {
                                     .tint(Theme.steel)
                                 }
                                 .disabled(!model.isConnected)
+
+                                EmergencyStopButton(compact: true)
+                                    .frame(maxWidth: .infinity)
                             }
                         }
 

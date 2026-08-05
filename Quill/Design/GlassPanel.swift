@@ -36,6 +36,38 @@ struct GlassEffectContainer<Content: View>: View {
     }
 }
 
+/// Always-visible emergency stop — feed hold, cancel job, soft-reset.
+struct EmergencyStopButton: View {
+    @EnvironmentObject private var model: AppModel
+    var compact: Bool = false
+    /// Bind ⌘. only once in the window (header); avoid duplicate shortcuts.
+    var bindsShortcut: Bool = false
+
+    var body: some View {
+        let button = Button {
+            model.halt()
+        } label: {
+            Label(
+                compact ? "E‑Stop" : "Emergency Stop",
+                systemImage: "hand.raised.fill"
+            )
+            .font(.system(compact ? .caption : .subheadline, design: .rounded).weight(.bold))
+            .frame(minWidth: compact ? 72 : 140)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Theme.danger)
+        .controlSize(compact ? .regular : .large)
+        .disabled(!model.isConnected)
+        .help("Emergency stop — hold feed, cancel the job, and reset the controller (⌘.)")
+
+        if bindsShortcut {
+            button.keyboardShortcut(".", modifiers: .command)
+        } else {
+            button
+        }
+    }
+}
+
 enum QuillGlassShape {
     case capsule
     case rect(cornerRadius: CGFloat)

@@ -85,7 +85,11 @@ struct RunGlassView: View {
                             Button("Hold") { model.pauseJob() }
                             Button("Resume") { model.resumeJob() }
                             Button("Stop", role: .destructive) { model.cancelJob() }
+                                .help("Cancel the job stream without resetting the controller")
                         }
+
+                        EmergencyStopButton()
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
                         Text(String(
                             format: "Head %.2f, %.2f, %.2f",

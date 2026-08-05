@@ -24,6 +24,7 @@ struct AdvancedView: View {
                             .font(Theme.captionFont)
                             .foregroundStyle(.secondary)
                         HStack(spacing: 10) {
+                            EmergencyStopButton(compact: true)
                             Button("Unlock") { model.unlock() }
                             Button("Soft reset") { model.softReset() }
                             Button("Factory reset…", role: .destructive) {

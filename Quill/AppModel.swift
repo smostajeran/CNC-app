@@ -49,6 +49,8 @@ final class AppModel: ObservableObject {
     }
     @Published var calibrationNote: String?
     @Published var motionWarning: String?
+    /// Title for the top status banner (`motionWarning`).
+    @Published var noticeTitle: String = "Check power"
     @Published var confirmFactoryReset = false
     @Published var firmwareAssessment = FirmwareAssessment.assess(buildInfo: "")
     @Published var lastProbeBanner: String = ""
@@ -168,7 +170,8 @@ final class AppModel: ObservableObject {
                 self?.status = status
                 self?.runner.noteStatus(status)
                 if status.state.localizedCaseInsensitiveContains("alarm") {
-                    self?.motionWarning = "Controller is in Alarm — open Advanced and tap Unlock, then Soft reset if needed."
+                    self?.noticeTitle = "Machine locked"
+                    self?.motionWarning = "Controller is in Alarm — tap Unlock in the header, then Soft reset in Advanced if needed."
                 }
             }
         }
@@ -223,6 +226,7 @@ final class AppModel: ObservableObject {
         }
         lastError = nil
         motionWarning = nil
+        noticeTitle = "Check power"
         connectionState = .connecting
         UserDefaults.standard.set(selectedPort, forKey: Self.portKey)
         UserDefaults.standard.set(baudRate, forKey: Self.baudKey)
@@ -234,6 +238,7 @@ final class AppModel: ObservableObject {
                 try client.connect(path: path, baudRate: baud)
                 await MainActor.run {
                     self.connectionState = .connected
+                    self.noticeTitle = "Check power"
                     self.motionWarning = "USB linked. Confirm the blue power switch / board POWER LED is on (12V). USB can connect with motors unpowered."
                     self.requestStatus()
                 }
@@ -290,9 +295,15 @@ final class AppModel: ObservableObject {
 
     func softReset() { try? coordinator.softReset() }
     func unlock() { try? coordinator.unlock() }
+
+    /// Emergency stop: cancel any job, feed-hold, then soft-reset the controller.
     func halt() {
+        penChangeMessage = nil
         runner.cancel()
         try? coordinator.halt()
+        noticeTitle = "Emergency stop"
+        motionWarning = "Motion halted and the controller was reset. If the header shows Locked, tap Unlock before moving again. Soft reset in Advanced if Unlock alone does not clear it."
+        console.append("--- Emergency stop (feed hold + soft reset) ---")
     }
     func feedHold() { try? coordinator.feedHold() }
     func requestStatus() { try? coordinator.requestStatus() }
