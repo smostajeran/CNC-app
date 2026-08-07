@@ -1,4 +1,5 @@
 import SwiftUI
+import CNCCore
 
 struct AdvancedView: View {
     @EnvironmentObject private var model: AppModel
@@ -43,14 +44,14 @@ struct AdvancedView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Mirrored or backwards writing")
                             .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                        Toggle("Flip left ↔ right (X)", isOn: $model.machine.invertX)
-                        Toggle("Flip front ↔ back (Y)", isOn: $model.machine.invertY)
-                        Toggle("Flip pen lift (Z)", isOn: $model.machine.invertZ)
+                        Toggle("Flip left ↔ right (X)", isOn: invertBinding(\.invertX))
+                        Toggle("Flip front ↔ back (Y)", isOn: invertBinding(\.invertY))
+                        Toggle("Flip pen lift (Z)", isOn: invertBinding(\.invertZ))
                         Button("Save flips to machine") {
                             model.applyInvertToController()
                         }
                         .disabled(!model.isConnected)
-                        Text("Nudges in Move use these immediately. Save writes them into the controller for other apps too.")
+                        Text("Writes GRBL $3 on the controller (jog and Start share one direction). Host never second-flips jog — that made plots run opposite the pad and off the bed.")
                             .font(Theme.captionFont)
                             .foregroundStyle(.secondary)
                     }
@@ -101,5 +102,18 @@ struct AdvancedView: View {
         guard !line.isEmpty else { return }
         model.sendConsole(line)
         consoleInput = ""
+    }
+
+    private func invertBinding(_ keyPath: WritableKeyPath<MachineProfile, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { model.machine[keyPath: keyPath] },
+            set: { newValue in
+                model.machine[keyPath: keyPath] = newValue
+                model.persistMachine()
+                if model.isConnected {
+                    model.applyInvertToController()
+                }
+            }
+        )
     }
 }

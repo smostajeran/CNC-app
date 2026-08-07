@@ -161,7 +161,7 @@ public enum PageComposer {
         // Do not re-optimize the merged job — that would drop M0 pen-change markers and
         // reshuffle strokes across pens.
         let optimizedLayerJobs: [(PageLayer, PlotJob)] = layerJobs.map { layer, job in
-            (layer, PathOptimizer.optimize(job, mode: .serpentineRows))
+            (layer, PathOptimizer.optimize(job, mode: .rowsLeftToRight))
         }
 
         let job = mergeLayerJobs(layerJobs)

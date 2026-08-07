@@ -619,6 +619,7 @@ struct PageComposerView: View {
     private var metricsBar: some View {
         HStack(spacing: 16) {
             Toggle("Optimize paths", isOn: $model.optimizePaths)
+                .help("Reorders pen travel left-to-right per line. Off by default so letter order matches the preview.")
                 .onChange(of: model.optimizePaths) { _ in model.recomposePage() }
             if let m = model.composedPage {
                 metric("Draw", String(format: "%.0f mm", m.optimizedMetrics.drawDistanceMm))

@@ -96,9 +96,11 @@ public enum PathOptimizer {
         return paths
     }
 
-    /// Default for Quill writing: serpentine between true text lines (not glyph bands).
+    /// Default for Quill writing: left-to-right per text line.
+    /// Serpentine RTL passes reverse stroke *visit* order and look like flipped letters
+    /// on the machine even when final ink geometry is upright — keep that opt-in.
     public static func optimize(_ job: PlotJob) -> PlotJob {
-        optimize(job, mode: .serpentineRows)
+        optimize(job, mode: .rowsLeftToRight)
     }
 
     public static func optimize(_ job: PlotJob, mode: PathOptimizeMode) -> PlotJob {
