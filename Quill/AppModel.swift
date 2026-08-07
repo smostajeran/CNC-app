@@ -81,7 +81,8 @@ final class AppModel: ObservableObject {
     @Published var selectedElementIDs: Set<UUID> = []
     @Published var selectedLayerID: UUID?
     @Published var composedPage: ComposedPage?
-    @Published var optimizePaths = true
+    /// Off by default — serpentine/nearest-neighbor reorder can look like flipped letters.
+    @Published var optimizePaths = false
     @Published var batch = BatchDocument()
     @Published var csvHeaders: [String] = []
     @Published var newTextContent = ""
@@ -198,7 +199,19 @@ final class AppModel: ObservableObject {
                         self.homeCycleObserved = false
                         self.xyHomedThisSession = true
                         self.console.append("--- Homing complete — machine position trusted for Start ---")
-                        self.calibrationNote = "Homed. Leave work zero at this origin for Compose (bed coordinates)."
+                        // Compose emits bed coordinates from the homed corner. Sync G54 here so
+                        // WPos matches MPos — otherwise an old work offset drives jobs off the bed.
+                        do {
+                            let fresh = try self.coordinator.setWorkZero()
+                            self.status = fresh
+                            self.workZeroKnown = true
+                            self.console.append("--- Work zero synced to homed corner (G10 L20) ---")
+                            self.calibrationNote = "Homed. Work zero is at the switch corner. Jog to the paper corner and tap “Paper corner is here” — do not shift G54 for Compose."
+                        } catch {
+                            self.workZeroKnown = false
+                            self.calibrationNote = "Homed, but work zero sync failed. Tap “Sync work zero here” at the switch corner before Start."
+                            self.lastError = error.localizedDescription
+                        }
                     }
                 }
                 if alarm {
@@ -513,22 +526,79 @@ final class AppModel: ObservableObject {
     func feedHold() { try? coordinator.feedHold() }
     func requestStatus() { try? coordinator.requestStatus() }
 
+    /// Sync G54 so the current head position is work (0,0). For Compose, call this only at the
+    /// **homed** switch corner — paper placement uses `setPaperCornerHere()` (bedOrigin), not G54.
     func setWorkZero() {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
+        }
         do {
-            try coordinator.setWorkZero()
+            let fresh = try coordinator.setWorkZero()
+            status = fresh
             workZeroKnown = true
-            console.append("--- Work zero set (G10 L20 P1 X0 Y0) ---")
+            let w = fresh.wpos
+            console.append(String(
+                format: "--- Work zero set (G10 L20) — WPos now ≈ %.2f, %.2f ---",
+                w.x, w.y
+            ))
+            if fresh.hasReliableWorkOffset, abs(w.x) > 1.0 || abs(w.y) > 1.0 {
+                calibrationNote = String(
+                    format: "Work zero sent, but WPos still reads %.1f, %.1f. Re-home and sync again at the switch corner.",
+                    w.x, w.y
+                )
+            } else {
+                calibrationNote = "Work zero synced. Compose uses bed coordinates from this corner — use “Paper corner is here” to place the sheet."
+            }
         } catch {
+            workZeroKnown = false
             lastError = error.localizedDescription
         }
     }
 
-    /// Hobbyist Calibrate wording — same as Set Zero.
-    func setDrawingOriginHere() {
-        setWorkZero()
-        if lastError == nil {
-            calibrationNote = "Start corner set. Drawings will begin from this spot."
+    /// Place the Compose page so its bottom-left matches the current head (bed / machine mm).
+    /// Does **not** change G54 — shifting work zero for paper was the main cause of runaway
+    /// travel (job bed coords + offset → past the open end of the bed).
+    func setPaperCornerHere() {
+        guard isConnected else {
+            lastError = "Connect first"
+            return
         }
+        guard xyHomedThisSession else {
+            lastError = "Home X/Y first. Paper corner is measured from the trusted homed bed origin."
+            return
+        }
+        let x = status.mpos.x
+        let y = status.mpos.y
+        let maxX = max(0, machine.travelX - page.format.widthMm)
+        let maxY = max(0, machine.travelY - page.format.heightMm)
+        if x < -0.5 || y < -0.5 || x > machine.travelX + 0.5 || y > machine.travelY + 0.5 {
+            lastError = "Head reports outside the bed — re-home before setting the paper corner."
+            return
+        }
+        if x > maxX + 0.5 || y > maxY + 0.5 {
+            lastError = String(
+                format: "Paper %.0f×%.0f mm cannot start at (%.1f, %.1f) — it would hang off the %.0f×%.0f mm bed.",
+                page.format.widthMm, page.format.heightMm, x, y,
+                machine.travelX, machine.travelY
+            )
+            return
+        }
+        page.bedOriginX = min(max(0, x), maxX)
+        page.bedOriginY = min(max(0, y), maxY)
+        calibrationNote = String(
+            format: "Paper corner at bed (%.1f, %.1f) mm. G54 stays at Home — jobs will not offset past the bed.",
+            page.bedOriginX, page.bedOriginY
+        )
+        console.append(String(
+            format: "--- Paper corner → bedOrigin %.3f, %.3f (G54 unchanged) ---",
+            page.bedOriginX, page.bedOriginY
+        ))
+    }
+
+    /// Hobbyist wording — paper placement, not G54.
+    func setDrawingOriginHere() {
+        setPaperCornerHere()
     }
 
     func applyPaperSize(widthMm: Double, heightMm: Double, writeToController: Bool) {

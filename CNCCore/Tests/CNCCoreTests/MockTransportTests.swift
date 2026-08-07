@@ -143,4 +143,23 @@ final class GRBLClientProbeTests: XCTestCase {
         XCTAssertNil(coord.busyReason)
         client.disconnect()
     }
+
+    func testSetWorkZeroWaitsForOkAndRefreshesStatus() throws {
+        let transport = MockTransport()
+        let client = GRBLClient(transport: transport)
+        try client.connect(path: "/dev/mock", baudRate: 115_200)
+        // Stale offset so a successful G10 + status must clear WPos via WCO:0.
+        transport.readQueue.append(Data("<Idle|MPos:40.000,10.000,0.000|WCO:40.000,10.000,0.000|FS:0,0>\n".utf8))
+        Thread.sleep(forTimeInterval: 0.15)
+        transport.written.removeAll()
+        let status = try CommandCoordinator(client: client).setWorkZero()
+        let lines = transport.written.compactMap { String(data: $0, encoding: .utf8) }
+        XCTAssertTrue(lines.contains { $0.hasPrefix("G10 L20 P1 X0 Y0") })
+        XCTAssertTrue(transport.written.contains(Data([GRBLRealtime.status])))
+        XCTAssertTrue(status.hasReliableWorkOffset)
+        // Mock status reply uses WCO:0 — work position should match machine.
+        XCTAssertEqual(status.wpos.x, status.mpos.x, accuracy: 0.001)
+        XCTAssertEqual(status.wpos.y, status.mpos.y, accuracy: 0.001)
+        client.disconnect()
+    }
 }

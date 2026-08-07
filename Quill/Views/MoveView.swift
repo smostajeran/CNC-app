@@ -80,6 +80,27 @@ struct MoveView: View {
                                     Text("The gantry will move until both end buttons click. Keep hands clear and remove anything that could snag the rails.")
                                 }
 
+                                Button {
+                                    model.setPaperCornerHere()
+                                } label: {
+                                    Label("Paper corner is here", systemImage: "doc.plaintext")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(Theme.steel)
+                                .disabled(!model.isConnected || !model.xyHomedThisSession || !model.allowsManualCommands)
+                                .help("Sets Compose page origin to this bed position. Does not change G54 — that stays at Home so jobs cannot run past the bed.")
+
+                                Button {
+                                    model.setWorkZero()
+                                } label: {
+                                    Label("Sync work zero here", systemImage: "scope")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(!model.isConnected || !model.allowsManualCommands)
+                                .help("G10 L20 — only at the homed switch corner for Compose. For paper placement use “Paper corner is here”.")
+
                                 HStack(spacing: 12) {
                                     Button {
                                         model.penUp()
@@ -108,13 +129,19 @@ struct MoveView: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Position")
                                     .font(.system(.subheadline, design: .rounded).weight(.semibold))
-                                Text(positionLabel)
+                                Text(machinePositionLabel)
                                     .font(.system(.title3, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(Theme.ink)
+                                Text(workPositionLabel)
+                                    .font(.system(.body, design: .rounded).monospacedDigit())
+                                    .foregroundStyle(Theme.inkMuted)
+                                Text(paperOriginLabel)
+                                    .font(Theme.captionFont.weight(.semibold))
                                     .foregroundStyle(Theme.ink)
                                 Text("If nothing moves, check the 12V adapter and blue power switch — USB can connect while motors are off.")
                                     .font(Theme.captionFont)
                                     .foregroundStyle(Theme.inkMuted)
-                                Text("Home X/Y seeks the end switches so the controller knows the bed corner. Compose jobs use bed coordinates from that homed origin — leave work zero there. Enable soft limits ($20) after a successful Home before Start.")
+                                Text("1) Home X/Y (auto-syncs work zero). 2) Jog to the paper’s bottom-left. 3) Paper corner is here. Soft limits ($20) after a good Home — before Start.")
                                     .font(Theme.captionFont)
                                     .foregroundStyle(Theme.inkMuted)
                                 DisclosureGroup("Pen heights (mm)") {
@@ -180,7 +207,7 @@ struct MoveView: View {
                 model.jog(dx: 0, dy: -model.jogStep)
             }
             if model.machine.invertX || model.machine.invertY {
-                Text("Axis flip is on — Save flips in Advanced if the head moves opposite the pad.")
+                Text("Axis flip ($3) is on — toggle Flip in Advanced if the head moves opposite the pad.")
                     .font(Theme.captionFont)
                     .foregroundStyle(Theme.caution)
                     .multilineTextAlignment(.center)
@@ -201,12 +228,29 @@ struct MoveView: View {
         .quillGlass(tint: Theme.steelBright.opacity(0.2), shape: .rect(cornerRadius: 14), interactive: true)
     }
 
-    private var positionLabel: String {
+    private var machinePositionLabel: String {
         String(
-            format: "X %.1f · Y %.1f · Z %.1f",
+            format: "Machine  X %.1f · Y %.1f · Z %.1f",
             model.status.mpos.x,
             model.status.mpos.y,
             model.status.mpos.z
+        )
+    }
+
+    private var workPositionLabel: String {
+        String(
+            format: "Work     X %.1f · Y %.1f · Z %.1f",
+            model.status.wpos.x,
+            model.status.wpos.y,
+            model.status.wpos.z
+        )
+    }
+
+    private var paperOriginLabel: String {
+        String(
+            format: "Paper origin on bed  X %.1f · Y %.1f mm",
+            model.page.bedOriginX,
+            model.page.bedOriginY
         )
     }
 }

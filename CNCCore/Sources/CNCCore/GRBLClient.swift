@@ -194,8 +194,20 @@ public final class GRBLClient: @unchecked Sendable {
     }
 
     /// Set current XY as work coordinate zero (G54 via G10 L20).
+    /// Waits for `ok` and refreshes status so WPos/WCO are visible to the host.
+    /// Fire-and-forget G10 left the UI on stale MPos and looked like “home never set”.
     public func setWorkZero() throws {
+        stopPolling()
+        defer { startPolling() }
         try sendLine("G10 L20 P1 X0 Y0")
+        let response = try collectUntilOk(timeout: 2.0, requireOk: true)
+        let lower = response.lowercased()
+        if lower.contains("error:") {
+            throw GRBLClientError.settingRejected("G10 L20 work zero rejected: \(response)")
+        }
+        try requestStatus()
+        Thread.sleep(forTimeInterval: 0.1)
+        _ = try drain(timeout: 0.25)
     }
 
     /// Pen up, then rapid to work origin.

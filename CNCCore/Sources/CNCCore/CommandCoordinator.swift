@@ -143,9 +143,11 @@ public final class CommandCoordinator: @unchecked Sendable {
         try client.markPoint(machine: machine)
     }
 
-    public func setWorkZero() throws {
+    @discardableResult
+    public func setWorkZero() throws -> GRBLStatus {
         try requireManual()
         try client.setWorkZero()
+        return client.lastStatus
     }
 
     public func goToOrigin(machine: MachineProfile) throws {
